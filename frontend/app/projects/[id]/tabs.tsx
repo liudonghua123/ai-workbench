@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { LogViewer } from "@/components/LogViewer";
 import { CopyButton, Empty, KV, LoadingRows, Pill, StatusPill, useToast } from "@/components/ui";
@@ -14,7 +14,9 @@ import {
   relativeTime,
 } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
-import type { Deployment, EnvVar, Project, TreeNode } from "@/lib/types";
+import type { Deployment, EnvVar, Project, SqlMode, TreeNode } from "@/lib/types";
+
+const ACTIVE_DEPLOY = ["queued", "building", "deploying"];
 
 /* ==========================================================================
    overview
@@ -477,30 +479,72 @@ export function DeployTab({
   const { t, locale } = useI18n();
   const [selected, setSelected] = useState<string | null>(deployments[0]?.id ?? null);
   const [detail, setDetail] = useState<Deployment | null>(null);
+  const [streaming, setStreaming] = useState(false);
+  const refreshRef = useRef(onRefresh);
+
+  useEffect(() => {
+    refreshRef.current = onRefresh;
+  }, [onRefresh]);
 
   useEffect(() => {
     if (!selected && deployments[0]) setSelected(deployments[0].id);
   }, [deployments, selected]);
 
   const loadDetail = useCallback(async () => {
-    if (!selected) return;
+    if (!selected) return null;
     try {
-      setDetail(await api.deployment(selected));
+      const result = await api.deployment(selected);
+      setDetail(result);
+      return result;
     } catch {
-      /* ignore transient polling errors */
+      return null;
     }
   }, [selected]);
 
+  // One snapshot, then live deltas over SSE — no polling interval to tune or leak.
   useEffect(() => {
-    loadDetail();
-    const active = detail ? ["queued", "building", "deploying"].includes(detail.status) : false;
-    if (!active) return;
-    const timer = setInterval(loadDetail, 1200);
-    return () => clearInterval(timer);
-  }, [loadDetail, detail?.status]);
+    setDetail(null);
+    setStreaming(false);
+    let cancelled = false;
+    loadDetail().then((result) => {
+      if (!cancelled && result && ACTIVE_DEPLOY.includes(result.status)) setStreaming(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDetail]);
+
+  useEffect(() => {
+    if (!selected || !streaming) return;
+    const source = new EventSource(api.deploymentStreamUrl(selected));
+    // the stream replays from line 0, so restart the buffer instead of appending twice
+    setDetail((prev) => (prev ? { ...prev, log: "" } : prev));
+
+    source.addEventListener("log", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as { lines: string[] };
+      setDetail((prev) =>
+        prev ? { ...prev, log: `${prev.log ?? ""}${payload.lines.join("\n")}\n` } : prev,
+      );
+    });
+    source.addEventListener("status", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as Partial<Deployment>;
+      setDetail((prev) => (prev ? { ...prev, ...payload } : prev));
+    });
+    const finish = () => {
+      source.close();
+      setStreaming(false);
+      refreshRef.current();
+    };
+    source.addEventListener("done", finish);
+    source.addEventListener("timeout", finish);
+    source.onerror = () => {
+      source.close();
+      setStreaming(false);
+    };
+    return () => source.close();
+  }, [selected, streaming]);
 
   const selectedMeta = deployments.find((item) => item.id === selected) ?? detail;
-  const streaming = detail ? ["queued", "building", "deploying"].includes(detail.status) : false;
 
   const stop = async () => {
     if (!selected) return;
@@ -631,9 +675,17 @@ export function DataTab({ project }: { project: Project }) {
   const [busy, setBusy] = useState(false);
   const [objects, setObjects] = useState<{ key: string; size: number }[] | null>(null);
   const [bucket, setBucket] = useState("");
+  const [mode, setMode] = useState<SqlMode | null>(null);
 
   const hasDb = project.resources.some((resource) => resource.kind === "database");
   const hasStorage = project.resources.some((resource) => resource.kind === "storage");
+
+  useEffect(() => {
+    api
+      .sqlMode()
+      .then(setMode)
+      .catch(() => setMode(null));
+  }, []);
 
   useEffect(() => {
     if (!hasStorage) return;
@@ -675,6 +727,11 @@ export function DataTab({ project }: { project: Project }) {
         <div className="card-head">
           <Icon name="database" size={14} />
           <span className="card-title">{t("data.console")}</span>
+          {mode ? (
+            <Pill tone={mode.readonly ? "warn" : "err"}>
+              {mode.readonly ? t("data.readonly") : t("sys.sqlWrite")}
+            </Pill>
+          ) : null}
           <div className="spacer" />
           <span className="tag">
             {project.resources.find((resource) => resource.kind === "database")?.name ??

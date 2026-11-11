@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Any
 
 from app.core.config import settings
@@ -22,7 +23,10 @@ class LocalDatabaseProvider(DatabaseProvider):
 
     def create_database(self, name: str, *, project_id: str) -> DatabaseInfo:
         path = self._path(name)
-        with sqlite3.connect(path) as conn:
+        # `with sqlite3.connect(...)` only commits — it does not close, which on Windows
+        # keeps the file locked and breaks rollback. Close it explicitly.
+        conn = sqlite3.connect(path)
+        try:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value TEXT)"
             )
@@ -30,12 +34,26 @@ class LocalDatabaseProvider(DatabaseProvider):
                 "INSERT OR REPLACE INTO _meta(key, value) VALUES ('project_id', ?)", (project_id,)
             )
             conn.commit()
+        finally:
+            conn.close()
         return self.describe(name)
 
     def drop_database(self, name: str) -> None:
         path = self._path(name)
-        if path.exists():
-            path.unlink()
+        if not path.exists():
+            return
+        # Windows keeps the handle until the last connection closes; retry briefly,
+        # then rename so the name is free even if the file itself lingers.
+        for attempt in range(6):
+            try:
+                path.unlink()
+                return
+            except PermissionError:
+                time.sleep(0.15 * (attempt + 1))
+        try:
+            path.rename(path.with_suffix(".db.deleted"))
+        except OSError as exc:  # pragma: no cover - last resort
+            raise ProviderError(f"无法删除数据库文件: {name}") from exc
 
     def describe(self, name: str) -> DatabaseInfo:
         path = self._path(name)
@@ -53,7 +71,8 @@ class LocalDatabaseProvider(DatabaseProvider):
         if not path.exists():
             raise ProviderError(f"数据库不存在: {name}")
         statement = sql.strip().rstrip(";")
-        with sqlite3.connect(path) as conn:
+        conn = sqlite3.connect(path)
+        try:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(statement)
             if cursor.description is None:
@@ -61,4 +80,6 @@ class LocalDatabaseProvider(DatabaseProvider):
                 return [{"rowcount": cursor.rowcount}]
             columns = [c[0] for c in cursor.description]
             rows = cursor.fetchmany(limit)
+        finally:
+            conn.close()
         return [dict(zip(columns, tuple(row), strict=False)) for row in rows]

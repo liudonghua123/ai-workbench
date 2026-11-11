@@ -55,6 +55,28 @@ class Settings(BaseSettings):
     # --- agent runtime -------------------------------------------------
     default_agent_model: str = "workbuddy-flash"
     agent_max_steps: int = 24
+    # "auto" -> LLM when WB_LLM_API_KEY is set, otherwise the local planner
+    # "local" -> always rule-based   "llm" -> always LLM (fail loudly)
+    agent_harness: str = "auto"
+    # Any OpenAI-compatible /chat/completions endpoint (vLLM, Ollama, DashScope, ...)
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_api_key: str = ""
+    llm_model: str = ""
+    llm_timeout: float = 90.0
+    llm_temperature: float = 0.2
+
+    # --- database console ----------------------------------------------
+    # "readonly" refuses anything that is not a read statement
+    sql_mode: str = "readonly"
+    sql_row_limit: int = 500
+
+    # --- auth ----------------------------------------------------------
+    # off by default so local development stays frictionless.
+    # WB_AUTH_ENABLED=true + WB_AUTH_TOKENS="tok1:alice:admin,tok2:bob:viewer"
+    auth_enabled: bool = False
+    auth_tokens: str = ""
+    # token handed to the auto-provisioned operator account when auth is on
+    auth_bootstrap_token: str = "workbench-dev-token"
 
     # --- misc ----------------------------------------------------------
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]

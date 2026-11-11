@@ -52,6 +52,7 @@ export interface Project {
   port: number | null;
   url: string;
   git_initialized: boolean;
+  owner_id: string;
   created_at: string | null;
   updated_at: string | null;
   meta: Record<string, unknown>;
@@ -145,6 +146,7 @@ export interface AgentRun {
   output: string;
   steps: AgentStep[];
   created_at?: string;
+  fallback?: boolean;
 }
 
 export interface Agent {
@@ -215,4 +217,47 @@ export interface Settings {
   data_dir: string;
   port_range: [number, number];
   default_agent_model: string;
+  agent_harness: "llm" | "local";
+  llm_configured: boolean;
+  auth_enabled: boolean;
+  sql: SqlMode;
+  providers: { storage: string; database: string; domain: string; deploy: string };
+}
+
+export interface SqlMode {
+  mode: "readonly" | "write";
+  readonly: boolean;
+  row_limit: number;
+  allowed_read: string[];
+  allowed_write: string[];
+}
+
+export interface LlmStatus {
+  configured: boolean;
+  base_url: string;
+  model: string;
+  harness: "llm" | "local" | "local (fallback)";
+  requested_harness: string;
+  timeout_s: number;
+  max_steps: number;
+  note: string;
+}
+
+export interface LlmTest {
+  ok: boolean;
+  configured: boolean;
+  model?: string;
+  reply?: string;
+  error?: string;
+}
+
+export interface HarnessReport {
+  active: string;
+  items: { name: string; available: boolean; active: boolean; kind: string }[];
+}
+
+export interface Me {
+  principal: { name: string; role: "admin" | "editor" | "viewer"; anonymous: boolean };
+  auth_enabled: boolean;
+  roles: Record<string, string>;
 }

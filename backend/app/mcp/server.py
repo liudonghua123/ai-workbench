@@ -20,7 +20,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from app.services.agent_runtime import run as run_agent_harness
-from app.services.system_tools import TOOLS
+from app.services.system_tools import TOOLS, describe_workbench
 
 mcp = FastMCP(
     name="ai-workbench",
@@ -46,16 +46,17 @@ def _extra_tools() -> None:
 
     @mcp.tool(name="workbench_capabilities")
     def workbench_capabilities() -> dict[str, Any]:
-        """Describe the tool surface and object model so an agent can plan safely."""
-        return {
-            "object_model": ["project", "resource(storage|database)", "domain", "deployment", "agent"],
-            "tools": sorted([*TOOLS, "run_workbench_agent", "workbench_capabilities"]),
-            "conventions": {
-                "domain": "<project-slug>.<WB_DOMAIN_SUFFIX>",
-                "bucket": "<project-slug>-assets",
-                "workspace": "data/projects/<project-slug>",
-            },
-        }
+        """Describe the tool surface, conventions and runtime so an agent can plan safely."""
+        report = describe_workbench()
+        report["object_model"] = [
+            "project",
+            "resource(storage|database)",
+            "domain",
+            "deployment",
+            "agent",
+        ]
+        report["tools"] = sorted([*TOOLS, "run_workbench_agent", "workbench_capabilities"])
+        return report
 
 
 _register()

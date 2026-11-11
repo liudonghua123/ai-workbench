@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,16 +10,45 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.core.errors import ValidationFailed
+from app.core.errors import ConflictError, ValidationFailed
 from app.core.ids import new_id
 from app.models import Deployment, DeploymentStatus, Event, EnvVar, Project, utcnow
 from app.providers import deploy_provider
 from app.providers.base import DeploySpec
 
+ACTIVE_STATUSES = (DeploymentStatus.QUEUED, DeploymentStatus.BUILDING, DeploymentStatus.DEPLOYING)
+
+# One in-flight run per project. The DB check below handles the common case; this
+# lock also covers a stop/retry racing a background task in the same process.
+_RUN_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(project_id: str) -> asyncio.Lock:
+    lock = _RUN_LOCKS.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _RUN_LOCKS[project_id] = lock
+    return lock
+
+
+def active_deployment(session: Session, project_id: str) -> Deployment | None:
+    return session.exec(
+        select(Deployment)
+        .where(Deployment.project_id == project_id)
+        .where(Deployment.status.in_(ACTIVE_STATUSES))  # type: ignore[attr-defined]
+        .order_by(Deployment.started_at.desc())  # type: ignore[attr-defined]
+    ).first()
+
 
 def create_deployment(session: Session, project: Project, environment: str = "production") -> Deployment:
     if not project.repo_path:
         raise ValidationFailed("项目没有工作目录，无法部署")
+    running = active_deployment(session, project.id)
+    if running is not None:
+        raise ConflictError(
+            f"项目已有进行中的部署 {running.version}（{running.status}），请等待完成或先停止",
+            details={"deployment_id": running.id, "status": running.status},
+        )
     count = len(
         session.exec(select(Deployment).where(Deployment.project_id == project.id)).all()
     )
@@ -53,6 +83,17 @@ def _env_for(session: Session, project: Project) -> dict[str, str]:
 
 
 async def run_deployment(deployment_id: str) -> None:
+    """Serialise runs per project, then execute the deployment."""
+    with Session(engine) as probe:
+        row = probe.get(Deployment, deployment_id)
+        project_id = row.project_id if row else ""
+    if not project_id:
+        return
+    async with _lock_for(project_id):
+        await _run_deployment(deployment_id)
+
+
+async def _run_deployment(deployment_id: str) -> None:
     """Background worker. Owns its session so it survives the request that queued it."""
     with Session(engine) as session:
         deployment = session.get(Deployment, deployment_id)

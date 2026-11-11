@@ -5,14 +5,20 @@ import type {
   DomainBinding,
   EnvVar,
   EventItem,
+  HarnessReport,
+  LlmStatus,
+  LlmTest,
   McpServer,
+  Me,
   Overview,
   Project,
   Settings,
   Skill,
+  SqlMode,
   Template,
   TreeNode,
 } from "./types";
+import { getToken, notifyUnauthorized, tokenQuery } from "./auth";
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000/api/v1";
@@ -28,10 +34,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
@@ -41,6 +49,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const body = text ? JSON.parse(text) : {};
   if (!res.ok) {
     const err = body?.error;
+    // one prompt for the whole app, not one broken page per request
+    if (res.status === 401) notifyUnauthorized();
     throw new ApiError(
       err?.message ?? `请求失败 (${res.status})`,
       res.status,
@@ -63,6 +73,11 @@ export const api = {
   settings: () => request<Settings>("/system/settings"),
   providers: () => request<Record<string, unknown>>("/system/providers"),
   events: (limit = 60) => request<EventItem[]>(`/system/events?limit=${limit}`),
+  llm: () => request<LlmStatus>("/system/llm"),
+  testLlm: () => post<LlmTest>("/system/llm/test"),
+  harnesses: () => request<HarnessReport>("/system/harnesses"),
+  me: () => request<Me>("/system/me"),
+  sqlMode: () => request<SqlMode>("/system/sql-mode"),
 
   projects: () => request<Project[]>("/projects"),
   project: (id: string) => request<Project>(`/projects/${id}`),
@@ -94,10 +109,13 @@ export const api = {
       `/projects/${id}/resources`,
     ),
   dbQuery: (id: string, sql: string) =>
-    post<{ rows: Record<string, unknown>[]; row_count: number; database: string }>(
-      `/projects/${id}/database/query`,
-      { sql },
-    ),
+    post<{
+      rows: Record<string, unknown>[];
+      row_count: number;
+      database: string;
+      statement?: string;
+      mode?: string;
+    }>(`/projects/${id}/database/query`, { sql }),
   objects: (id: string) =>
     request<{ bucket: string; objects: { key: string; size: number }[] }>(
       `/projects/${id}/storage/objects`,
@@ -109,6 +127,8 @@ export const api = {
   deployment: (deploymentId: string) => request<Deployment>(`/deployments/${deploymentId}`),
   stopDeployment: (deploymentId: string) =>
     post<Deployment>(`/deployments/${deploymentId}/stop`),
+  deploymentStreamUrl: (deploymentId: string) =>
+    tokenQuery(`${API_BASE}/deployments/${deploymentId}/stream`),
 
   domains: (id: string) => request<DomainBinding[]>(`/projects/${id}/domains`),
   addDomain: (id: string, subdomain: string, suffix = "") =>

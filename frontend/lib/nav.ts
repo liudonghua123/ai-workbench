@@ -17,9 +17,10 @@ export const NAV: NavEntry[] = [
   { href: "/mcp", labelKey: "nav.mcp", icon: "plug", groupKey: "group.capabilities" },
   { href: "/skills", labelKey: "nav.skills", icon: "puzzle", groupKey: "group.capabilities" },
   { href: "/events", labelKey: "nav.events", icon: "pulse", groupKey: "group.capabilities" },
+  { href: "/settings", labelKey: "nav.settings", icon: "settings", groupKey: "group.system" },
 ];
 
-export const NAV_GROUPS: MessageKey[] = ["group.workspace", "group.capabilities"];
+export const NAV_GROUPS: MessageKey[] = ["group.workspace", "group.capabilities", "group.system"];
 
 export function isActive(pathname: string, href: string): boolean {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);

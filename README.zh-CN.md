@@ -26,6 +26,9 @@ AI 工作台就是这套接口。你可视化创建项目，平台按约定自�
 | **一键部署** | 带版本号、流式构建日志与健康检查 |
 | **资源实操** | 直接对项目自己的数据库跑 SQL；浏览对象存储里的 key |
 | **MCP / Skills / Agents** | 三者都是一等公民，以数据形式存储、可视化增删改 |
+| **真 Agent，也可离线** | 规划器可插拔：配一个 OpenAI 兼容端点，Agent 就真的在工具调用上推理；没有 Key 时自动退回规则规划器 |
+| **有护栏的数据库控制台** | 默认只读：语句白名单 + `ATTACH` / `load_extension` / `writable_schema` 黑名单 |
+| **可选令牌鉴权** | `viewer` / `editor` / `admin` 三种角色，一个中间件同时管 REST 与 `/mcp`；本地默认关闭 |
 | **约定大于配置** | 工作区路径、桶名、库名、主域名、端口全部由 slug 推导 |
 | **云可替换** | 存储 / 数据库 / DNS / 部署统一在 Provider SPI 之后，换云只改一个环境变量 |
 | **双语 · 主题 · 可换导航** | 中英文（默认英文）、跟随系统/浅色/深色主题、导航可在侧边栏或顶栏之间切换 |
@@ -86,9 +89,13 @@ npm run dev
 
 ### 部署
 
-部署是异步的：请求立即返回，日志随构建进程增量推送，健康检查决定 `运行中` 还是 `失败`。
+部署是异步的：请求立即返回，日志随构建进程增量推送，健康检查决定 `运行中` 还是 `失败`。浏览器通过 **SSE**（`/deployments/{id}/stream`）收日志，没有轮询间隔要调；同一项目已有部署在跑时，再次触发会被 `409` 拒绝。
 
 ![部署](docs/screenshots/06-project-deploy.png)
+
+![实时部署日志](docs/screenshots/21-deploy-live.png)
+
+数据标签页通过和真实云同一套 Provider 接口访问项目自己的库。控制台**默认只读**：`DROP`、`ATTACH`、`PRAGMA writable_schema` 在执行前就被拦下。
 
 ![数据](docs/screenshots/07-project-data.png)
 
@@ -147,11 +154,14 @@ relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
 
 | 工具 | 作用 |
 | --- | --- |
+| `describe_workbench` | 约定、Provider、模板、规划器与工具清单 —— 建议第一把就调它 |
 | `list_templates` | 可用模板及各自需要的资源 |
 | `create_project` | 生成骨架并装配存储、数据库、域名 |
 | `list_projects` / `get_project` | 查状态、资源、域名、最近部署 |
-| `list_project_files` / `read_project_file` / `write_project_file` | 读写应用代码 |
-| `set_env_var` | 改环境变量，下次部署注入 |
+| `list_project_files` / `read_project_file` / `write_project_file` / `delete_project_file` | 读写、删除应用代码 |
+| `list_env_vars` / `set_env_var` | 查看与修改环境变量，下次部署注入 |
+| `query_database` | 对项目数据库执行受护栏约束的只读查询 |
+| `add_domain` | 给项目再绑一个域名 |
 | `deploy_project` / `deployment_status` | 触发构建并轮询结果 |
 | `list_agents` / `run_workbench_agent` | 把高层目标交给配置好的 Agent |
 | `workbench_capabilities` | 返回对象模型与全部约定，让外部 Agent 能安全规划 |
@@ -159,10 +169,62 @@ relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
 典型 Agent 闭环：
 
 ```
-list_templates → create_project → write_project_file → deploy_project → deployment_status
+describe_workbench → list_templates → create_project → write_project_file → deploy_project → deployment_status
 ```
 
-REST 侧等价物：`/api/v1` 下 45 个端点，<http://localhost:8000/docs> 可直接浏览。
+REST 侧等价物：`/api/v1` 下 40 个端点，<http://localhost:8000/docs> 可直接浏览。
+
+---
+
+## Agent 运行时
+
+内置两个规划器，按配置自动选择：
+
+| 规划器 | 生效条件 | 行为 |
+| --- | --- | --- |
+| `llm` | 配了 `WB_LLM_API_KEY`（或显式 `WB_AGENT_HARNESS=llm`） | 对任意 OpenAI 兼容 `/chat/completions` 端点做真实 function calling |
+| `local` | 其余情况 | 关键词意图路由，能力齐全但理解力有限 |
+
+工具 schema 是**从 REST 层已经在用的 Python 签名和 docstring 生成**的 —— 一个 Agent 能力与一个 API 端点就是同一个对象。模型端点中途失联时，运行时会把它记成一步失败、自动降级到本地规划器并打标，你拿到的是答案而不是一个红色错误。
+
+```bash
+# OpenAI / Azure / vLLM / Ollama / 通义兼容模式，同一个客户端
+WB_LLM_BASE_URL=https://api.openai.com/v1
+WB_LLM_API_KEY=sk-...
+WB_LLM_MODEL=gpt-4o-mini
+```
+
+`backend/tools/mock_llm.py` 是一个会回放工具调用的假端点，整条链路可以离线验证：
+
+```bash
+python tools/mock_llm.py                       # :8811
+WB_LLM_BASE_URL=http://127.0.0.1:8811/v1 WB_LLM_API_KEY=test uv run uvicorn app.main:app
+```
+
+系统设置页的「测试连通性」会真发一次请求并回显模型答复。
+
+![Agent 运行时](docs/screenshots/22-settings-zh.png)
+
+---
+
+## 访问控制
+
+默认关闭（本地工作台不该为了打开一个页面先要凭据）。打开后一个中间件同时守住 REST 和挂载的 MCP：
+
+```bash
+WB_AUTH_ENABLED=true
+WB_AUTH_TOKENS="tok_admin:alice:admin,tok_read:bob:viewer"
+```
+
+| 角色 | 权限 |
+| --- | --- |
+| `viewer` | 只读自己名下的资源 |
+| `editor` | 可创建、可修改，不能删除 |
+| `admin` | 全部，且能看到所有项目 |
+
+项目带 `owner_id`，非 admin 只看得到自己的。浏览器把令牌存在 `localStorage`，以 Bearer 头发送；任何 `401` 只会弹一次解锁框，而不是让每个页面各自烂掉。
+
+![令牌解锁](docs/screenshots/23-token-gate.png)
 
 ---
 
@@ -187,8 +249,11 @@ REST 侧等价物：`/api/v1` 下 45 个端点，<http://localhost:8000/docs> �
 | --- | --- | --- |
 | 换云（COS / S3 / PostgreSQL / DNSPod / Docker） | 加一个 provider 模块，设 `WB_*_PROVIDER` | 否 |
 | 加模板 | `backend/app/services/templates.py` 加一个 dataclass | 否 |
-| 加 Agent 可用能力 | 加一个函数并注册进 `TOOLS` | 否 |
-| 换真实 LLM 替换规则规划器 | 替换 `agent_runtime.py` 的 `_plan()` | 否 |
+| 加 Agent 可用能力 | 加一个函数并注册进 `TOOLS`，REST / MCP / Agent 同时获得 | 否 |
+| 换 Agent 框架（agentscope、langgraph） | 继承 `Harness` 并 `register_harness` | 否 |
+| 换模型供应商 | 设 `WB_LLM_BASE_URL` / `WB_LLM_MODEL` | 否 |
+| 放开 SQL 控制台 | `WB_SQL_MODE=write` | 否 |
+| 加角色或令牌 | `WB_AUTH_TOKENS` | 否 |
 | 内嵌真正的 VS Code | 设 `WB_IDE_URL_TEMPLATE` | 否 |
 | 新增一门语言 | `lib/i18n.tsx` 加一个对象 | 否 |
 | 加新资源类型（如 Redis） | 新增 provider 能力 + 模板声明 | 是 |
@@ -217,9 +282,20 @@ WB_DEPLOY_MODE=simulate          # simulate | process
 WB_STORAGE_PROVIDER=local        # 可换成 s3 / cos / oss ...
 WB_IDE_URL_TEMPLATE=             # code-server 入口，支持 {path} {project}
 WB_DATA_DIR=./data               # 项目、桶、数据库、DNS 区
+
+WB_AGENT_HARNESS=auto            # auto | local | llm
+WB_LLM_BASE_URL=https://api.openai.com/v1
+WB_LLM_API_KEY=                  # 配了它，Agent 就用真实模型规划
+WB_LLM_MODEL=
+
+WB_SQL_MODE=readonly             # readonly | write
+WB_AUTH_ENABLED=false            # true -> 必须带 Bearer 令牌
+WB_AUTH_TOKENS=                  # "令牌:名字:admin,令牌2:bob:viewer"
 ```
 
 `WB_DEPLOY_MODE=process` 会真的在分配端口上起子进程；`simulate`（默认）只产出贴近真实的构建日志，不启动任何东西。
+
+表结构变更在启动时按前向兼容方式自动应用（`app/core/migrate.py`）：只加列、只建幂等索引，没有需要记住的迁移步骤。
 
 ---
 
@@ -229,15 +305,18 @@ WB_DATA_DIR=./data               # 项目、桶、数据库、DNS 区
 backend/
   app/
     api/           projects · platform · registry · system
-    services/      scaffold · templates · deployments · system_tools · agent_runtime
+    core/          config · db · security · migrate · errors · ids
+    services/      scaffold · templates · deployments · system_tools
+                   agent_runtime · llm · sql_guard
     providers/     base（SPI + 注册表）+ local/{storage,database,domain,deploy}
     mcp/server.py  fastmcp 服务端，与 REST 同端口
     models.py      9 张表
+  tools/mock_llm.py  离线验证 LLM 链路的假端点
 frontend/
-  app/             10 个路由，/projects/[id] 下五个标签页
-  components/      Shell · Rail · Topbar · NavLinks · Preferences
+  app/             11 个路由，/projects/[id] 下五个标签页
+  components/      Shell · Rail · Topbar · NavLinks · Preferences · TokenGate
                    CreateProjectDialog · LogViewer · Icon（全 SVG）
-  lib/             api · types · format · i18n · prefs · nav
+  lib/             api · auth · types · format · i18n · prefs · nav
 docs/architecture.md   设计取舍、数据模型、扩展点
 scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 ```
@@ -246,9 +325,9 @@ scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 
 ## 已知限制
 
-单用户、无鉴权 · SQL 控制台无沙箱 · Agent 规划器是规则驱动而非 LLM · 同项目并发部署未加锁 · 项目创建跨 Provider 非原子。
+没有项目级 RBAC（角色是全局的）· SQL 护栏是首关键字白名单而非真正的解析器 · 部署串行化只在单进程内有效，多副本仍可能竞争 · MCP 鉴权依赖客户端主动带 header · Agent 写文件没有影子副本，`write_project_file` 前没有 dry-run。
 
-每一条的推荐解法见[架构文档 §12](docs/architecture.md#12-已知限制与下一步)。
+每一条的推荐解法见[架构文档 §13](docs/architecture.md#13-已知限制与下一步)。
 
 ---
 

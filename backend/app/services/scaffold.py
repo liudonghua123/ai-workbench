@@ -145,12 +145,19 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
         _git_init(repo_path)
         project.git_initialized = (repo_path / ".git").exists()
     except Exception as exc:  # noqa: BLE001 - surface any provider/template failure to the UI
+        rolled_back = _rollback(session, project, context)
         project.status = ProjectStatus.FAILED
-        project.meta = {**project.meta, "error": str(exc)}
+        project.meta = {**project.meta, "error": str(exc), "rolled_back": rolled_back}
         project.updated_at = utcnow()
         session.add(project)
         session.commit()
-        log_event(session, "project.failed", f"项目创建失败: {exc}", project_id=project.id)
+        log_event(
+            session,
+            "project.failed",
+            f"项目创建失败并已回滚: {exc}",
+            project_id=project.id,
+            rolled_back=rolled_back,
+        )
         raise
 
     project.status = ProjectStatus.READY
@@ -160,6 +167,50 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
     session.refresh(project)
     log_event(session, "project.ready", f"项目 {project.name} 已就绪", project_id=project.id)
     return project
+
+
+def _rollback(session: Session, project: Project, context: dict[str, str]) -> list[str]:
+    """Best-effort compensation for a half-created project.
+
+    Provisioning spans four providers, so a failure at step 4 must not leave a bucket,
+    a database or a DNS record behind. Every step is individually guarded: a rollback
+    that itself throws is worse than a partial rollback.
+    """
+    actions: list[str] = []
+
+    for resource in session.exec(
+        select(ProjectResource).where(ProjectResource.project_id == project.id)
+    ).all():
+        try:
+            if resource.kind == ResourceKind.STORAGE:
+                storage_provider().delete_bucket(resource.name)
+            elif resource.kind == ResourceKind.DATABASE:
+                database_provider().drop_database(resource.name)
+            actions.append(f"removed {resource.kind}:{resource.name}")
+        except Exception as exc:  # noqa: BLE001
+            actions.append(f"failed to remove {resource.kind}:{resource.name}: {exc}")
+        session.delete(resource)
+
+    for domain in session.exec(
+        select(DomainBinding).where(DomainBinding.project_id == project.id)
+    ).all():
+        try:
+            domain_provider().unbind(domain.fqdn)
+            actions.append(f"unbound domain:{domain.fqdn}")
+        except Exception as exc:  # noqa: BLE001
+            actions.append(f"failed to unbind {domain.fqdn}: {exc}")
+        session.delete(domain)
+
+    for env in session.exec(select(EnvVar).where(EnvVar.project_id == project.id)).all():
+        session.delete(env)
+
+    repo = Path(project.repo_path or "")
+    if project.repo_path and repo.exists():
+        shutil.rmtree(repo, ignore_errors=True)
+        actions.append(f"removed workspace:{repo.name}")
+
+    session.commit()
+    return actions
 
 
 def _write_files(root: Path, template: TemplateSpec, context: dict[str, str]) -> None:
@@ -368,3 +419,18 @@ def write_file(project: Project, rel: str, content: str) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8", newline="\n")
     return {"path": rel, "size": len(content)}
+
+
+def delete_file(project: Project, rel: str) -> dict:
+    path = _safe_path(project, rel)
+    if not path.is_file():
+        raise NotFoundError(f"文件不存在: {rel}")
+    size = path.stat().st_size
+    path.unlink()
+    # drop directories that became empty, but never the project root
+    root = project_root(project)
+    parent = path.parent
+    while parent != root and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent
+    return {"path": rel, "deleted": True, "bytes": size}

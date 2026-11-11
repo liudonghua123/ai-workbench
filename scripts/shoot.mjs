@@ -98,9 +98,25 @@ const run = async () => {
       ["/mcp", "10-mcp", "mcp servers"],
       ["/skills", "11-skills", "skills"],
       ["/events", "12-events", "events"],
+      ["/settings", "20-settings", "system settings"],
     ]) {
       await page.goto(`${WEB}${path}`, { waitUntil: "networkidle" });
       await shot(page, name, note);
+    }
+
+    // live deploy: trigger one through the API, then watch the SSE stream fill the log
+    const triggered = await fetch(`${API}/projects/${project.id}/deployments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (triggered.ok) {
+      await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "networkidle" });
+      await page.getByRole("tab").nth(2).click();
+      await page.waitForTimeout(2200);
+      const terminal = await page.locator(".terminal").first().innerText().catch(() => "");
+      if (!terminal.includes("[")) problems.push("deploy log stayed empty — SSE may be broken");
+      await shot(page, "21-deploy-live", "deployment streaming over SSE");
     }
 
     // preferences popover
@@ -138,6 +154,8 @@ const run = async () => {
     await shot(page, "18-project-zh", "project detail (zh)");
     await page.goto(`${WEB}/agents`, { waitUntil: "networkidle" });
     await shot(page, "19-agents-zh", "agents (zh)");
+    await page.goto(`${WEB}/settings`, { waitUntil: "networkidle" });
+    await shot(page, "22-settings-zh", "system settings (zh)");
     await ctx.close();
   }
 

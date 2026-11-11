@@ -5,7 +5,8 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import get_session
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
+from app.core.security import Principal, can_access, get_principal
 from app.models import DomainBinding, EnvVar, Project, ProjectStatus
 from app.schemas import DomainCreate, EnvVarUpsert, FileWrite, ProjectCreate
 from app.providers import domain_provider
@@ -16,14 +17,30 @@ from app.services.serializers import serialize_domain, serialize_env, serialize_
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def _load(session: Session, project_id: str, principal: Principal):
+    project = scaffold.get_project(session, project_id)
+    if not can_access(principal, project.owner_id):
+        # do not leak existence across owners
+        raise NotFoundError(f"项目不存在: {project_id}")
+    return project
+
+
 @router.get("")
-def list_projects(session: Session = Depends(get_session)):
+def list_projects(
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
     projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()  # type: ignore[attr-defined]
-    return [serialize_project(session, p) for p in projects]
+    visible = [p for p in projects if can_access(principal, p.owner_id)]
+    return [serialize_project(session, p) for p in visible]
 
 
 @router.post("", status_code=201)
-def create_project(payload: ProjectCreate, session: Session = Depends(get_session)):
+def create_project(
+    payload: ProjectCreate,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
     project = scaffold.create_project(
         session,
         CreateProjectSpec(
@@ -37,15 +54,23 @@ def create_project(payload: ProjectCreate, session: Session = Depends(get_sessio
             deploy=payload.deploy,
         ),
     )
+    if not principal.anonymous:
+        project.owner_id = principal.name
+        session.add(project)
+        session.commit()
+        session.refresh(project)
     body = serialize_project(session, project)
     body["deploy_requested"] = payload.deploy
     return body
 
 
 @router.get("/{project_id}")
-def get_project(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
-    return serialize_project(session, project)
+def get_project(
+    project_id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    return serialize_project(session, _load(session, project_id, principal))
 
 
 @router.delete("/{project_id}", status_code=204)
@@ -53,14 +78,19 @@ def delete_project(
     project_id: str,
     purge_files: bool = Query(default=False),
     session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
 ):
-    project = scaffold.get_project(session, project_id)
+    project = _load(session, project_id, principal)
     scaffold.delete_project(session, project, purge_files=purge_files)
 
 
 @router.post("/{project_id}/archive")
-def archive_project(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def archive_project(
+    project_id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    project = _load(session, project_id, principal)
     project.status = ProjectStatus.ARCHIVED
     session.add(project)
     session.commit()

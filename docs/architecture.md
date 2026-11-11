@@ -224,11 +224,15 @@ def set_env_var(project_id: str, key: str, value: str, is_secret: bool = False) 
 益处：Agent 能做的事与人能做的事**永远等价**，不存在"UI 有但 MCP 没有"的能力缺口；
 工具行为的测试一次覆盖三条链路。
 
-### 工具清单（11 个）
+### 工具清单（16 个）
 
-`list_templates` `list_projects` `get_project` `create_project` `deploy_project`
-`deployment_status` `list_project_files` `read_project_file` `write_project_file`
-`set_env_var` `list_agents`
+`describe_workbench` `list_templates` `list_projects` `get_project` `create_project`
+`deploy_project` `deployment_status` `list_project_files` `read_project_file`
+`write_project_file` `delete_project_file` `list_env_vars` `set_env_var`
+`query_database` `add_domain` `list_agents`
+
+`describe_workbench` 是给模型用的"说明书"：约定、Provider、模板、规划器、工具清单
+一次给全，省掉三轮试探。
 
 ### MCP 服务端
 
@@ -257,11 +261,43 @@ app.mount("/mcp", http_app())   # streamable HTTP
 
 ## 7. Agent 运行时
 
-`app/services/agent_runtime.py` 是**可替换的 Harness 抽象**（当前内置轻量实现，
-接口对齐 AgentScope 这类库的 `plan → act → observe` 循环）。
+`app/services/agent_runtime.py` 是**可替换的 Harness 抽象**，内置两个实现，按配置选择：
 
 ```
-prompt ──▶ 意图解析（关键词 → 意图 + 槽位）
+WB_AGENT_HARNESS=auto ──┬─ 有 WB_LLM_API_KEY ──▶ LlmHarness
+                        └─ 无 key ───────────▶ LocalHarness
+```
+
+### 7.1 LlmHarness —— 真实 function calling
+
+```
+prompt ──▶ 组 system（约定 + describe_workbench 结果）
+       ──▶ llm.chat(messages, tools=schemas)
+       ──▶ 有 tool_calls？ 执行 → 追加 role=tool 消息 → 回到上一步
+       └─ 无 tool_calls  ──▶ 模型的口头结论 + 轨迹渲染 → 落库
+```
+
+关键设计：
+
+- **工具 schema 由签名生成**。`llm.tool_schema(fn)` 读 `inspect.signature` 与
+  `get_type_hints`，把 `Optional[X]` 降级为"非必填"、`list[dict]` 变成
+  `array<object>`、有默认值的参数带 `default`。因此**加一个 Agent 能力 = 加一个
+  带类型注解和 docstring 的函数**，不写一行 JSON schema。
+- **客户端只有 20 行**：`httpx.post("{base_url}/chat/completions")`。OpenAI /
+  Azure / vLLM / Ollama / 通义兼容模式共用同一个实现，不绑定任何厂商 SDK。
+- **单步失败不炸整轮**：工具异常被转成 `{ok:false, error}` 回灌给模型，让它自己
+  换参数重试；只有模型端点本身不可达才抛 `HarnessError`。
+- **降级而非报错**：`HarnessError` 带上已完成的 steps，`run()` 捕获后跑一遍
+  LocalHarness，把失败点作为 `__harness__` 步骤插入轨迹，`status` 仍按真实工具
+  成败判定，并置 `fallback=true`。用户拿到答案，同时知道这次不是模型想的。
+
+### 7.2 LocalHarness —— 确定性路由器
+
+关键词 → 意图 + 槽位 → 固定工具序列。没有 key、没有网络、没有随机性，
+因此可离线演示、可断言、可作为降级底座。
+
+```
+prompt ──▶ 意图解析（关键词）
        ──▶ 计划生成（intent → [tool_call, ...]）
        ──▶ 逐步执行（每步独立捕获异常，单步失败不中断整体）
        ──▶ 观察聚合（把每步 result 提炼成人类可读结论）
@@ -272,14 +308,15 @@ prompt ──▶ 意图解析（关键词 → 意图 + 槽位）
 
 | scope | 可用工具 |
 | --- | --- |
-| `readonly` | 只读类（list / get / read_file / deployment_status） |
+| `readonly` | 只读类（describe / list / get / read_file / query_database / deployment_status） |
 | `project` | 读 + 改文件、改环境变量、部署（**不能删项目**） |
 | `full` | 全部，含删除与跨项目操作 |
 
-权限在 Harness 选工具前过滤，不是靠模型自觉。
+权限在 Harness 拿到 `tools` 字典之前就过滤掉了，模型根本看不见越权工具 —— 不是靠
+提示词自觉。
 
-**接入真实 LLM**：替换 `_plan()` 即可。工具定义已是 JSON-schema 友好的签名，
-可直接转成 OpenAI / Anthropic 的 function calling 描述；执行层与落库层不用动。
+**换框架**（agentscope / langgraph / 自研 ReAct）：继承 `Harness`、实现
+`execute(task) -> (output, steps)`、调 `register_harness()`。执行层与落库层零改动。
 
 ---
 
@@ -322,15 +359,117 @@ running    → 写 url（优先主域名，回退 <fqdn>:<port>），finished_at
 - `process`：真起子进程监听分配端口，`stop` 时终止。适合本地验证。
 
 **为什么部署是异步任务而不是同步请求**：构建可能几十秒，同步会打爆浏览器与反向代理超时；
-异步 + 轮询（前端 1.2s 间隔）实现简单、可断线重连、日志天然可增量。
+异步 + 流式输出实现简单、可断线重连、日志天然可增量。
+
+### 9.1 并发控制：三道闸
+
+部署是最容易出竞态的地方，所以设了三层：
+
+1. **状态闸**：`create_deployment` 先查同项目是否存在 `queued|building|deploying`
+   的记录，有则 `409 Conflict` 并回带在跑那个的 id —— 前端能直接跳过去看。
+2. **进程内锁**：`_RUN_LOCKS[project_id]` 的 `asyncio.Lock`，防止 stop/retry 与
+   后台任务在同一进程里交错。
+3. **版本号**：`v<n>` 在创建时按已有条数计算，配合状态闸不会出现两个 v3。
+
+### 9.2 日志传输：SSE 而不是轮询
+
+```
+GET /deployments/{id}/stream        text/event-stream
+  event: log     {"lines": [...]}     ← 只推增量（按已发行数切片）
+  event: status  {"status": "...", ...}
+  event: done    {...}                ← 终态即关闭
+```
+
+选择理由：日志是单向、高频、无历史回放需求的流，SSE 用原生 `EventSource`
+即可，不需要 WebSocket 的双向与心跳；`EventSource` 不能带 header，所以鉴权额外
+支持 `?token=`（`security.extract_token` 唯一一处为此让步）。
+
+前端不再有 `setInterval`：拿到初始快照后，若状态是活跃的才开流，`done` 时关流并
+刷新列表。轮询间隔这个"魔法数字"彻底消失。
 
 ---
 
-## 10. 前端表现层：i18n 与布局偏好
+## 10. 安全与护栏
+
+三个独立开关，默认都朝"本地好用"倾斜，但每一个都能一行配置变严。
+
+### 10.1 鉴权：一个中间件，两条协议
+
+```
+request ──▶ principal_middleware
+              ├─ WB_AUTH_ENABLED=false → 匿名 admin，放行（本地默认）
+              ├─ 公开路径（/docs, /system/health, /system/settings）→ 放行
+              ├─ 解析 Bearer / X-Workbench-Token / ?token= → 无匹配则 401
+              ├─ 方法级 RBAC：GET 全放、写需 editor、DELETE 需 admin
+              └─ 写 request.state.principal，路由用 Depends 取
+```
+
+为什么放在**中间件**而不是依赖：`/mcp` 是 `app.mount("/")` 挂进来的独立 ASGI
+应用，依赖注入管不到它。中间件在挂载之前执行，于是 REST 与 MCP 共用同一套策略 ——
+不会出现"REST 要 token、MCP 裸奔"的经典漏洞。
+
+令牌存环境变量（`WB_AUTH_TOKENS="token:name:role"`）而不是数据库：无状态、重启即
+生效、不需要迁移。代价是轮换要重启，这在单机工作台的规模下是划算的。
+
+**归属隔离**：`Project.owner_id` 记录创建者；非 admin 的 list 过滤、get/delete
+对非本人项目返回 **404 而不是 403** —— 不泄露"这个 id 存在"这一事实。
+
+前端侧：`lib/auth.ts` 存 token，`lib/api.ts` 统一附带 header；任何 401 派发
+`wb:unauthorized`，`TokenGate` 收到后弹一次解锁框。**一个提示，而不是 N 个烂页面。**
+
+### 10.2 SQL 护栏：白名单 + 逃生舱黑名单
+
+数据库控制台连的是真实 sqlite 文件，所以"用户写什么就执行什么"是明显的坑。护栏
+不写 SQL 解析器，用两步：
+
+```
+1) 去注释 → 去尾分号 → 检测残留 ';'（多语句直接拒）
+2) 首关键字白名单：readonly 只放 SELECT/WITH/EXPLAIN/PRAGMA/SHOW/DESCRIBE/ANALYZE
+3) 逃生舱黑名单：ATTACH / DETACH / load_extension( / writefile( / readfile( /
+                 writable_schema / PRAGMA x=y / VACUUM INTO
+4) PRAGMA 再按名字白名单（table_info、index_list、foreign_key_list…）
+```
+
+取舍：**比正则沙箱严，比真解析器简单**。首关键字方案会误拒 `WITH ... DELETE` 这类
+写法，但那是"少一个便利"，而漏放 `ATTACH` 是"整台机器失守"—— 不对等，所以选前者。
+
+`WB_SQL_MODE=write` 放开语句类型限制，但黑名单永远生效。
+
+### 10.3 前向兼容迁移
+
+`SQLModel.metadata.create_all` 不会 ALTER 已存在的表，于是"给 `Project` 加一列"
+在已有库上会静默炸掉所有 select。`core/migrate.py` 在启动时补齐：
+
+```
+inspect(engine) → 对比 COLUMNS 声明 → ALTER TABLE ... ADD COLUMN → 建幂等索引
+```
+
+规则只有一条：**只加，不改，不删**。需要重命名就新增一列 + 双写 + 后续清理，
+真正的迁移工具（Alembic）留到多副本部署时再上。
+
+### 10.4 创建回滚
+
+项目创建横跨四个 Provider，任何一步失败都不能留下半套云资源：
+
+```
+写工作区 → 建桶 → 建库 → 写 env → 绑域名 → git init
+              │
+              └─ 任一步抛错 → _rollback():
+                   反向逐项撤销（每个动作单独 try，撤销失败不影响其它）
+                   + 删工作区 + 删资源/域名/env 行
+                   + 项目置 failed 并记录 rolled_back 清单
+```
+
+保留 `failed` 的项目行（而不是删掉）是刻意的：UI 上能看到"哪个项目失败了、为什么"，
+事件流里也有记录；但外部资源一定已经清干净，不会占用桶名或域名。
+
+---
+
+## 11. 前端表现层：i18n 与布局偏好
 
 表现层只有两条规则：**文案不进组件、偏好不进数据库**。
 
-### 10.1 类型化字典
+### 11.1 类型化字典
 
 `lib/i18n.tsx` 用 `en` 对象作为唯一真相源：
 
@@ -359,7 +498,7 @@ relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
 - **需要内嵌 `<code>` 的句子**用占位符切分（`t("mcp.desc").split("{path}")`），
   避免把 JSX 塞进字典。
 
-### 10.2 布局偏好
+### 11.2 布局偏好
 
 `lib/prefs.tsx` 只持有影响 DOM 结构的偏好（当前是导航位置）：
 
@@ -378,14 +517,17 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 
 ---
 
-## 11. 扩展点总览
+## 12. 扩展点总览
 
 | 想做的事 | 动哪里 | 要不要改前端 |
 | --- | --- | --- |
 | 换云存储 / 云数据库 / DNS / 部署目标 | 新增 `providers/<cloud>/*.py` + 改 `.env` 一行 | 否 |
 | 加一套新模板 | `templates.py` 加一个 dataclass | 否（目录自动展示） |
-| 加一个 Agent 可用的能力 | `system_tools.py` 加函数 + 注册进 `TOOLS` | 否（REST/MCP 自动同步） |
-| 接入真实 LLM | 替换 `agent_runtime._plan()` | 否 |
+| 加一个 Agent 可用的能力 | `system_tools.py` 加函数 + 注册进 `TOOLS` | 否（REST/MCP/Agent 自动同步） |
+| 换模型供应商 | 设 `WB_LLM_BASE_URL` / `WB_LLM_MODEL` | 否 |
+| 换 Agent 框架 | 继承 `Harness` + `register_harness` | 否 |
+| 放开 SQL 写入 | `WB_SQL_MODE=write` | 否 |
+| 加角色 / 令牌 / 改权限策略 | `core/security.py` + `WB_AUTH_TOKENS` | 否 |
 | 接入 Web 版 VS Code | 设 `WB_IDE_URL_TEMPLATE` | 否（自动切 iframe） |
 | 加一门语言 | `lib/i18n.tsx` 加一个对象 + `LOCALES` 一项 | 否 |
 | 加一种资源类型（如 Redis） | `ResourceKind` 加枚举 + Provider 新能力 + 模板声明 | 是（资源表格渲染） |
@@ -396,40 +538,46 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 
 ---
 
-## 12. 已知限制与下一步
+## 13. 已知限制与下一步
 
 | 限制 | 现状 | 建议 |
 | --- | --- | --- |
-| 无鉴权 | 单用户本地运行，无登录 | 加 OIDC / 简单 token 中间件，`Project.owner_id` 已预留位置 |
+| 角色是全局的 | `viewer/editor/admin` 作用于整个实例 | 加 `ProjectMember` 表，把 `check_method` 换成按项目判定 |
+| SQL 护栏非解析器 | 首关键字白名单，`WITH ... DELETE` 会被误拒 | 引入 sqlglot 做 AST 级判定；只读连接（`PRAGMA query_only`）双保险 |
+| 部署串行化仅进程内 | 多副本部署时 `_RUN_LOCKS` 各管各的 | 活跃部署改为数据库唯一约束（partial unique index） |
+| 项目创建非事务 | 已加补偿回滚，但非原子 | Provider 侧提供两阶段（prepare/commit）能力 |
+| MCP 鉴权依赖客户端 | 需客户端主动带 header | 网关层做 mTLS 或统一反代鉴权 |
+| Agent 写入无影子副本 | 直接落盘，覆盖即覆盖 | 写入前 `git stash`/自动 commit，支持一键回滚 |
 | 端口分配非原子 | 单进程内顺序分配 | 多副本部署时改用数据库唯一约束 + 重试 |
-| SQL 执行无沙箱 | 项目库独立，但可执行任意 SQL | 只读连接 + 语句白名单（`SELECT` 前缀） |
-| Agent 为规则驱动 | 关键词意图解析，无真实 LLM | 换 `_plan()` 为 LLM function calling |
 | 语言首屏翻转 | 默认 en，hydration 后切到存储的 zh | 改读 cookie 让 SSR 直接出正确语言 |
-| 无并发部署限制 | 同项目可并行触发多个部署 | 项目级锁（`Deployment` 活跃状态检查） |
 
 ---
 
-## 13. 目录速查
+## 14. 目录速查
 
 ```
 backend/
   app/
-    main.py              应用装配（CORS、路由、MCP 挂载、种子数据）
+    main.py              应用装配（CORS、鉴权中间件、路由、MCP 挂载、种子数据）
     models.py            9 张表
     schemas.py           请求/响应契约
-    core/                config(全部 WB_* 配置) / db / errors / ids
+    core/                config(全部 WB_* 配置) / db / security(令牌+RBAC)
+                         migrate(前向兼容) / errors / ids
     api/                 projects / platform / registry / system
     services/            scaffold / templates / deployments / system_tools
-                         agent_runtime / serializers
+                         agent_runtime(local+llm harness) / llm / sql_guard
+                         serializers
     providers/           base(SPI+registry) + local/{storage,database,domain,deploy}
     mcp/server.py        fastmcp 服务端，与 REST 同端口
+  tools/mock_llm.py      离线验证 LLM 链路的假端点（OpenAI 兼容）
 frontend/
-  app/                   10 个路由（含 /projects/[id] 五标签页）
+  app/                   11 个路由（含 /projects/[id] 五标签页、/settings）
   components/            Shell(导航布局) / Rail / Topbar / NavLinks
-                         Preferences(语言·主题·导航) / CreateProjectDialog
-                         LogViewer / ProjectCard / Icon(全 SVG) / ui
-  lib/                   api / types / format(状态映射) / i18n(类型化字典)
-                         prefs(布局偏好) / nav(导航单一真相源)
+                         Preferences(语言·主题·导航) / TokenGate(401 解锁)
+                         CreateProjectDialog / LogViewer / ProjectCard
+                         Icon(全 SVG) / ui
+  lib/                   api / auth(token) / types / format(状态映射)
+                         i18n(类型化字典) / prefs(布局偏好) / nav(单一真相源)
 docs/architecture.md     本文档
 data/                    运行时生成（已 gitignore）
 ```

@@ -2,6 +2,7 @@
 
 import { usePrefs } from "@/lib/prefs";
 import { Rail } from "./Rail";
+import { TokenGate } from "./TokenGate";
 import { Topbar } from "./Topbar";
 
 /**
@@ -18,6 +19,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <Topbar />
         {children}
       </div>
+      <TokenGate />
     </div>
   );
 }

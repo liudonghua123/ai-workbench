@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import get_session
+from app.core.security import Principal, get_principal
 from app.models import (
     Agent,
     AgentRun,
@@ -17,6 +18,7 @@ from app.models import (
     Skill,
 )
 from app.providers import registry
+from app.services import llm, sql_guard
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -69,6 +71,13 @@ def overview(session: Session = Depends(get_session)):
         },
         "deploy_mode": settings.deploy_mode,
         "mcp_endpoint": settings.mcp_path,
+        "agent": {
+            "harness": llm.effective_harness(),
+            "model": llm.model_name(),
+            "llm_configured": llm.configured(),
+        },
+        "auth": {"enabled": settings.auth_enabled},
+        "sql": sql_guard.describe_mode(),
         "recent_events": [
             {
                 "id": e.id,
@@ -121,7 +130,11 @@ def list_events(
 
 @router.get("/settings")
 def public_settings():
-    """Everything the UI needs to render env-specific affordances."""
+    """Everything the UI needs to render env-specific affordances.
+
+    Deliberately public and secret-free: the browser must be able to decide whether to
+    show a token prompt *before* it holds a token.
+    """
     return {
         "app_name": settings.app_name,
         "api_prefix": settings.api_prefix,
@@ -133,4 +146,58 @@ def public_settings():
         "data_dir": settings.data_dir.as_posix(),
         "port_range": [settings.port_range_start, settings.port_range_end],
         "default_agent_model": settings.default_agent_model,
+        "agent_harness": llm.effective_harness(),
+        "llm_configured": llm.configured(),
+        "auth_enabled": settings.auth_enabled,
+        "sql": sql_guard.describe_mode(),
+        "providers": {
+            "storage": settings.storage_provider,
+            "database": settings.database_provider,
+            "domain": settings.domain_provider,
+            "deploy": settings.deploy_provider,
+        },
+    }
+
+
+# --- model / agent runtime -------------------------------------------------
+
+
+@router.get("/llm")
+def llm_status():
+    return llm.status()
+
+
+@router.post("/llm/test")
+def llm_test():
+    """One-shot connectivity check for the settings page."""
+    return llm.probe()
+
+
+@router.get("/me")
+def whoami(principal: Principal = Depends(get_principal)):
+    return {
+        "principal": principal.to_dict(),
+        "auth_enabled": settings.auth_enabled,
+        "roles": {"viewer": "只读", "editor": "可写不可删", "admin": "全部"},
+    }
+
+
+@router.get("/harnesses")
+def list_harnesses():
+    """Registered agent harnesses — the extension point, surfaced for the UI."""
+    from app.services.agent_runtime import get_harness
+
+    active = llm.effective_harness()
+    names = ["local", "llm"]
+    return {
+        "active": active,
+        "items": [
+            {
+                "name": name,
+                "available": True if name == "local" else llm.configured(),
+                "active": name == active,
+                "kind": get_harness(name).__class__.__name__,
+            }
+            for name in names
+        ],
     }

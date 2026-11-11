@@ -1,20 +1,36 @@
 from __future__ import annotations
 
+import json
+import time
+from typing import Iterator
+
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.core.db import get_session
+from app.core.config import settings
+from app.core.db import engine, get_session
 from app.core.errors import NotFoundError, ValidationFailed
+from app.core.security import Principal, can_access, get_principal
 from app.models import Deployment, ProjectResource, ResourceKind
 from app.providers import database_provider, deploy_provider, storage_provider, registry
 from app.schemas import DeployRequest
 from app.services import deployments as deploy_service
-from app.services import scaffold
+from app.services import scaffold, sql_guard
 from app.services.serializers import serialize_deployment
 from app.services.templates import build_registry
 
 router = APIRouter(tags=["platform"])
+
+TERMINAL_STATUSES = {"running", "failed", "stopped"}
+
+
+def _project(session: Session, project_id: str, principal: Principal):
+    project = scaffold.get_project(session, project_id)
+    if not can_access(principal, project.owner_id):
+        raise NotFoundError(f"项目不存在: {project_id}")
+    return project
 
 
 # --- templates -------------------------------------------------------------
@@ -49,16 +65,21 @@ def trigger_deploy(
     payload: DeployRequest,
     background: BackgroundTasks,
     session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
 ):
-    project = scaffold.get_project(session, project_id)
+    project = _project(session, project_id, principal)
     deployment = deploy_service.create_deployment(session, project, payload.environment)
     background.add_task(deploy_service.run_deployment, deployment.id)
     return serialize_deployment(deployment)
 
 
 @router.get("/projects/{project_id}/deployments")
-def list_deployments(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def list_deployments(
+    project_id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    project = _project(session, project_id, principal)
     rows = session.exec(
         select(Deployment)
         .where(Deployment.project_id == project.id)
@@ -68,15 +89,77 @@ def list_deployments(project_id: str, session: Session = Depends(get_session)):
 
 
 @router.get("/deployments/{deployment_id}")
-def get_deployment(deployment_id: str, session: Session = Depends(get_session)):
+def get_deployment(
+    deployment_id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
     row = session.get(Deployment, deployment_id)
     if row is None:
         raise NotFoundError("部署不存在")
     return serialize_deployment(row, include_log=True)
 
 
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+@router.get("/deployments/{deployment_id}/stream")
+def stream_deployment(deployment_id: str) -> StreamingResponse:
+    """Server-sent events: log deltas + status transitions until the run is terminal.
+
+    Polling works, but a deploy that streams feels alive and saves the client from
+    guessing an interval. Delta-based on log length so reconnects stay cheap.
+    """
+
+    def generate() -> Iterator[str]:
+        sent_lines = 0
+        last_status = ""
+        deadline = time.monotonic() + 600
+        while True:
+            with Session(engine) as session:
+                row = session.get(Deployment, deployment_id)
+                if row is None:
+                    yield _sse("error", {"message": "部署不存在"})
+                    return
+                lines = (row.log or "").splitlines()
+                new_lines = lines[sent_lines:]
+                sent_lines = len(lines)
+                status = row.status
+                snapshot = {
+                    "id": row.id,
+                    "status": status,
+                    "version": row.version,
+                    "url": row.url,
+                    "error": row.error,
+                    "log_lines": sent_lines,
+                }
+            if new_lines:
+                yield _sse("log", {"lines": new_lines})
+            if status != last_status:
+                yield _sse("status", snapshot)
+                last_status = status
+            if status in TERMINAL_STATUSES:
+                yield _sse("done", snapshot)
+                return
+            if time.monotonic() > deadline:
+                yield _sse("timeout", {"message": "流式输出超时，请改用轮询"})
+                return
+            time.sleep(0.4)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
 @router.post("/deployments/{deployment_id}/stop")
-async def stop_deployment(deployment_id: str, session: Session = Depends(get_session)):
+async def stop_deployment(
+    deployment_id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
     row = session.get(Deployment, deployment_id)
     if row is None:
         raise NotFoundError("部署不存在")
@@ -88,8 +171,12 @@ async def stop_deployment(deployment_id: str, session: Session = Depends(get_ses
 
 
 @router.get("/projects/{project_id}/resources")
-def list_resources(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def list_resources(
+    project_id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    project = _project(session, project_id, principal)
     rows = session.exec(
         select(ProjectResource).where(ProjectResource.project_id == project.id)
     ).all()
@@ -112,9 +199,21 @@ class SqlQuery(BaseModel):
     limit: int = 100
 
 
+@router.get("/system/sql-mode")
+def sql_mode():
+    return sql_guard.describe_mode()
+
+
 @router.post("/projects/{project_id}/database/query")
-def run_db_query(project_id: str, payload: SqlQuery, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def run_db_query(
+    project_id: str,
+    payload: SqlQuery,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    project = _project(session, project_id, principal)
+    # validate before touching the provider so a bad statement costs nothing
+    statement = sql_guard.check(payload.sql)
     row = session.exec(
         select(ProjectResource).where(
             ProjectResource.project_id == project.id,
@@ -123,15 +222,26 @@ def run_db_query(project_id: str, payload: SqlQuery, session: Session = Depends(
     ).first()
     if row is None:
         raise ValidationFailed("项目没有数据库资源")
-    if not payload.sql.strip():
-        raise ValidationFailed("SQL 不能为空")
-    rows = database_provider().execute(row.name, payload.sql, limit=payload.limit)
-    return {"database": row.name, "provider": row.provider, "rows": rows, "row_count": len(rows)}
+    limit = min(max(payload.limit, 1), settings.sql_row_limit)
+    rows = database_provider().execute(row.name, statement, limit=limit)
+    return {
+        "database": row.name,
+        "provider": row.provider,
+        "statement": statement,
+        "mode": settings.sql_mode,
+        "rows": rows,
+        "row_count": len(rows),
+    }
 
 
 @router.get("/projects/{project_id}/storage/objects")
-def list_objects(project_id: str, prefix: str = "", session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def list_objects(
+    project_id: str,
+    prefix: str = "",
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    project = _project(session, project_id, principal)
     row = session.exec(
         select(ProjectResource).where(
             ProjectResource.project_id == project.id,

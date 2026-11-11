@@ -84,6 +84,8 @@ class Project(_Base, table=True):
     port: int | None = None
     primary_url: str = ""
     git_initialized: bool = False
+    # principal name that created the project; empty when auth is disabled
+    owner_id: str = Field(default="", index=True)
     meta: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, default=dict))
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)

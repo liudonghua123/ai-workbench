@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api import api_router
+from app.core import security
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import AppError
@@ -45,6 +46,32 @@ app = FastAPI(
     docs_url="/docs",
     openapi_url="/openapi.json",
 )
+
+@app.middleware("http")
+async def principal_middleware(request: Request, call_next):
+    """Resolve identity once per request and enforce coarse RBAC.
+
+    Done in middleware rather than a dependency so the mounted MCP app at ``/mcp`` is
+    covered by the same policy as REST — one surface, one rule set.
+    """
+    request.state.principal = security.ANONYMOUS_ADMIN
+    if (
+        settings.auth_enabled
+        and request.method != "OPTIONS"
+        and not security.is_public(request.url.path)
+    ):
+        try:
+            principal = security.resolve(request)
+            security.check_method(principal, request.method)
+        except AppError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        request.state.principal = principal
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,18 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { Empty, Pill, Skeleton, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { cx } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
-import type { Agent, AgentRun, Project } from "@/lib/types";
+import type { Agent, AgentRun, LlmStatus, Project } from "@/lib/types";
 
 export default function AgentsPage() {
   const { push } = useToast();
   const { t } = useI18n();
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [llm, setLlm] = useState<LlmStatus | null>(null);
   const [activeKey, setActiveKey] = useState<string>("");
   const [prompt, setPrompt] = useState("");
   const [projectId, setProjectId] = useState<string>("");
@@ -25,10 +27,11 @@ export default function AgentsPage() {
   const threadRef = useRef<HTMLDivElement>(null);
 
   const load = () =>
-    Promise.all([api.agents(), api.projects()])
-      .then(([list, projectList]) => {
+    Promise.all([api.agents(), api.projects(), api.llm()])
+      .then(([list, projectList, status]) => {
         setAgents(list);
         setProjects(projectList);
+        setLlm(status);
         if (!activeKey && list[0]) setActiveKey(list[0].key);
       })
       .catch((err) => push(err.message, "err"));
@@ -107,6 +110,27 @@ export default function AgentsPage() {
         </button>
       </div>
 
+      <section
+        className="card card-pad"
+        style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+      >
+        <Icon name={llm?.harness === "llm" ? "spark" : "route"} size={14} />
+        <span className="card-title">{t("agent.harness")}</span>
+        <Pill tone={llm?.harness === "llm" ? "accent" : "idle"}>
+          {llm?.harness === "llm" ? t("agent.harnessLlm") : t("agent.harnessLocal")}
+        </Pill>
+        <span className="muted mono" style={{ fontSize: 11 }}>
+          {llm?.model ?? "—"}
+        </span>
+        <div className="spacer" />
+        <span className="muted" style={{ fontSize: 11.5 }}>
+          {llm?.configured ? t("agent.harnessLlm") : t("agent.harnessHint")}
+        </span>
+        <Link className="btn btn-sm" href="/settings">
+          <Icon name="settings" size={12} /> {t("agent.configure")}
+        </Link>
+      </section>
+
       <div className="chat">
         <section className="card" style={{ padding: 8 }}>
           {agents === null ? (
@@ -157,7 +181,8 @@ export default function AgentsPage() {
             <div style={{ minWidth: 0 }}>
               <div className="card-title">{active?.name ?? t("agent.pick")}</div>
               <div className="muted mono" style={{ fontSize: 10.5 }}>
-                {active?.model ?? "—"} · harness: local
+                {active?.model || llm?.model || "—"} ·{" "}
+                {llm?.harness === "llm" ? t("agent.harnessLlm") : t("agent.harnessLocal")}
               </div>
             </div>
             <div className="spacer" />
@@ -191,6 +216,14 @@ export default function AgentsPage() {
                   </div>
                 ) : (
                   <div key={index} className="bubble bubble-agent">
+                    {item.run?.fallback ? (
+                      <div className="row" style={{ gap: 6, marginBottom: 6 }}>
+                        <Pill tone="warn">{t("agent.harnessFallback")}</Pill>
+                        <span className="muted" style={{ fontSize: 11 }}>
+                          {t("agent.fallbackNote")}
+                        </span>
+                      </div>
+                    ) : null}
                     <Rich text={item.text} />
                     {item.run?.steps?.length ? (
                       <div className="steps">

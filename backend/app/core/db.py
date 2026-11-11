@@ -12,10 +12,13 @@ engine = create_engine(settings.resolved_database_url, connect_args=connect_args
 
 
 def init_db() -> None:
-    """Create tables. Real deployments should switch to Alembic migrations."""
+    """Create tables, then apply additive migrations for databases that predate them."""
     import app.models  # noqa: F401  (register metadata)
 
     SQLModel.metadata.create_all(engine)
+    from app.core.migrate import ensure_columns
+
+    ensure_columns()
 
 
 def get_session() -> Iterator[Session]:
