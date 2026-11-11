@@ -326,7 +326,59 @@ running    → 写 url（优先主域名，回退 <fqdn>:<port>），finished_at
 
 ---
 
-## 10. 扩展点总览
+## 10. 前端表现层：i18n 与布局偏好
+
+表现层只有两条规则：**文案不进组件、偏好不进数据库**。
+
+### 10.1 类型化字典
+
+`lib/i18n.tsx` 用 `en` 对象作为唯一真相源：
+
+```ts
+const en = { "dash.title": "Workbench overview", ... } as const;
+export type MessageKey = keyof typeof en;                 // 键由英文推导
+const zh: Record<MessageKey, string> = { ... };           // 少一条即编译错误
+```
+
+于是三类错误都在编译期被拦住：拼错键、`zh` 缺条目、`t()` 传错变量名。
+
+消费方式统一：
+
+```tsx
+const { t, locale } = useI18n();
+t("dash.kpi.projectsFoot", { ready: 3 });   // "3 ready" / "3 个就绪"
+relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
+```
+
+配套约定：
+
+- **状态映射存键不存文案**。`format.ts` 的 `PROJECT_STATUS` 等是
+  `{ key: MessageKey, tone }`，`StatusPill` 内部翻译。这样徽章与表格、
+  卡片共用一份定义，不会出现"卡片翻译了、表格没翻译"。
+- **日期格式化跟随 locale**，而不是靠 `toLocaleString()` 的默认值。
+- **需要内嵌 `<code>` 的句子**用占位符切分（`t("mcp.desc").split("{path}")`），
+  避免把 JSX 塞进字典。
+
+### 10.2 布局偏好
+
+`lib/prefs.tsx` 只持有影响 DOM 结构的偏好（当前是导航位置）：
+
+```
+PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
+                     │           ├─ rail：渲染 <Rail/>
+                     └─ Topbar ──┴─ top ：渲染 <TopNav/>，隐藏 Rail
+```
+
+`components/NavLinks.tsx` 导出 `RailNav` / `TopNav` 两个变体，共享同一份
+`lib/nav.ts` 配置与同一份计数请求——新增一个页面只改 `NAV` 一处。
+
+主题走另一条路：它不需要改结构，所以直接写 `<html data-theme>`，并由
+`themeScript` 在 hydration 前执行，避免首屏闪烁。语言同理有轻微的首屏
+翻转（默认英文），这是"默认 en + localStorage"的固有代价，可接受。
+
+---
+
+## 11. 扩展点总览
 
 | 想做的事 | 动哪里 | 要不要改前端 |
 | --- | --- | --- |
@@ -335,6 +387,7 @@ running    → 写 url（优先主域名，回退 <fqdn>:<port>），finished_at
 | 加一个 Agent 可用的能力 | `system_tools.py` 加函数 + 注册进 `TOOLS` | 否（REST/MCP 自动同步） |
 | 接入真实 LLM | 替换 `agent_runtime._plan()` | 否 |
 | 接入 Web 版 VS Code | 设 `WB_IDE_URL_TEMPLATE` | 否（自动切 iframe） |
+| 加一门语言 | `lib/i18n.tsx` 加一个对象 + `LOCALES` 一项 | 否 |
 | 加一种资源类型（如 Redis） | `ResourceKind` 加枚举 + Provider 新能力 + 模板声明 | 是（资源表格渲染） |
 | 加管理页面 | `app/api/` 新路由 + `frontend/app/` 新页面 | 是 |
 
@@ -343,7 +396,7 @@ running    → 写 url（优先主域名，回退 <fqdn>:<port>），finished_at
 
 ---
 
-## 11. 已知限制与下一步
+## 12. 已知限制与下一步
 
 | 限制 | 现状 | 建议 |
 | --- | --- | --- |
@@ -351,12 +404,12 @@ running    → 写 url（优先主域名，回退 <fqdn>:<port>），finished_at
 | 端口分配非原子 | 单进程内顺序分配 | 多副本部署时改用数据库唯一约束 + 重试 |
 | SQL 执行无沙箱 | 项目库独立，但可执行任意 SQL | 只读连接 + 语句白名单（`SELECT` 前缀） |
 | Agent 为规则驱动 | 关键词意图解析，无真实 LLM | 换 `_plan()` 为 LLM function calling |
-| 前端未做 i18n | 中文硬编码 | 抽 `lib/i18n.ts` + 文案字典，按 `zh/en` 切换 |
+| 语言首屏翻转 | 默认 en，hydration 后切到存储的 zh | 改读 cookie 让 SSR 直接出正确语言 |
 | 无并发部署限制 | 同项目可并行触发多个部署 | 项目级锁（`Deployment` 活跃状态检查） |
 
 ---
 
-## 12. 目录速查
+## 13. 目录速查
 
 ```
 backend/
@@ -372,9 +425,11 @@ backend/
     mcp/server.py        fastmcp 服务端，与 REST 同端口
 frontend/
   app/                   10 个路由（含 /projects/[id] 五标签页）
-  components/            Rail / Topbar / ProjectCard / CreateProjectDialog
-                         LogViewer / ThemeToggle / Icon(全 SVG) / ui
-  lib/                   api(fetch 封装) / types / format
+  components/            Shell(导航布局) / Rail / Topbar / NavLinks
+                         Preferences(语言·主题·导航) / CreateProjectDialog
+                         LogViewer / ProjectCard / Icon(全 SVG) / ui
+  lib/                   api / types / format(状态映射) / i18n(类型化字典)
+                         prefs(布局偏好) / nav(导航单一真相源)
 docs/architecture.md     本文档
 data/                    运行时生成（已 gitignore）
 ```

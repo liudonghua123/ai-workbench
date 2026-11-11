@@ -1,26 +1,34 @@
+import type { MessageKey, Locale } from "./i18n";
+import { translate } from "./i18n";
+
 export function cx(...values: (string | false | null | undefined)[]): string {
   return values.filter(Boolean).join(" ");
 }
 
-export function relativeTime(input?: string | null): string {
+const DATE_LOCALE: Record<Locale, string> = { en: "en-US", zh: "zh-CN" };
+
+export function relativeTime(input?: string | null, locale: Locale = "en"): string {
   if (!input) return "—";
   const then = new Date(input).getTime();
   if (Number.isNaN(then)) return "—";
   const diff = Date.now() - then;
   const abs = Math.abs(diff);
   const min = 60_000;
-  if (abs < min) return "刚刚";
-  if (abs < 60 * min) return `${Math.round(abs / min)} 分钟前`;
-  if (abs < 24 * 60 * min) return `${Math.round(abs / (60 * min))} 小时前`;
-  if (abs < 30 * 24 * 60 * min) return `${Math.round(abs / (24 * 60 * min))} 天前`;
-  return new Date(input).toLocaleDateString("zh-CN");
+  const t = (key: MessageKey, vars?: Record<string, string | number>) =>
+    translate(locale, key, vars);
+
+  if (abs < min) return t("time.justNow");
+  if (abs < 60 * min) return t("time.minutesAgo", { n: Math.round(abs / min) });
+  if (abs < 24 * 60 * min) return t("time.hoursAgo", { n: Math.round(abs / (60 * min)) });
+  if (abs < 30 * 24 * 60 * min) return t("time.daysAgo", { n: Math.round(abs / (24 * 60 * min)) });
+  return new Date(input).toLocaleDateString(DATE_LOCALE[locale]);
 }
 
-export function clockTime(input?: string | null): string {
+export function clockTime(input?: string | null, locale: Locale = "en"): string {
   if (!input) return "";
   const date = new Date(input);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString("zh-CN", { hour12: false });
+  return date.toLocaleTimeString(DATE_LOCALE[locale], { hour12: false });
 }
 
 export function fmtBytes(size: number): string {
@@ -30,41 +38,44 @@ export function fmtBytes(size: number): string {
   return `${(size / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-type Tone = "ok" | "warn" | "err" | "idle" | "accent";
+export type Tone = "ok" | "warn" | "err" | "idle" | "accent";
 
-export const PROJECT_STATUS: Record<string, { label: string; tone: Tone }> = {
-  creating: { label: "创建中", tone: "warn" },
-  ready: { label: "就绪", tone: "ok" },
-  failed: { label: "失败", tone: "err" },
-  archived: { label: "已归档", tone: "idle" },
+/** Status maps carry a message key instead of a label so rendering stays locale-aware. */
+export type StatusMap = Record<string, { key: MessageKey; tone: Tone }>;
+
+export const PROJECT_STATUS: StatusMap = {
+  creating: { key: "status.project.creating", tone: "warn" },
+  ready: { key: "status.project.ready", tone: "ok" },
+  failed: { key: "status.project.failed", tone: "err" },
+  archived: { key: "status.project.archived", tone: "idle" },
 };
 
-export const DEPLOY_STATUS: Record<string, { label: string; tone: Tone }> = {
-  queued: { label: "排队中", tone: "warn" },
-  building: { label: "构建中", tone: "warn" },
-  deploying: { label: "部署中", tone: "warn" },
-  running: { label: "运行中", tone: "ok" },
-  failed: { label: "失败", tone: "err" },
-  stopped: { label: "已停止", tone: "idle" },
+export const DEPLOY_STATUS: StatusMap = {
+  queued: { key: "status.deploy.queued", tone: "warn" },
+  building: { key: "status.deploy.building", tone: "warn" },
+  deploying: { key: "status.deploy.deploying", tone: "warn" },
+  running: { key: "status.deploy.running", tone: "ok" },
+  failed: { key: "status.deploy.failed", tone: "err" },
+  stopped: { key: "status.deploy.stopped", tone: "idle" },
 };
 
-export const DOMAIN_STATUS: Record<string, { label: string; tone: Tone }> = {
-  active: { label: "已生效", tone: "ok" },
-  pending: { label: "待解析", tone: "warn" },
-  error: { label: "异常", tone: "err" },
+export const DOMAIN_STATUS: StatusMap = {
+  active: { key: "status.domain.active", tone: "ok" },
+  pending: { key: "status.domain.pending", tone: "warn" },
+  error: { key: "status.domain.error", tone: "err" },
 };
 
-export const MCP_STATUS: Record<string, { label: string; tone: Tone }> = {
-  healthy: { label: "健康", tone: "ok" },
-  error: { label: "不可达", tone: "err" },
-  unknown: { label: "未探测", tone: "idle" },
+export const MCP_STATUS: StatusMap = {
+  healthy: { key: "status.mcp.healthy", tone: "ok" },
+  error: { key: "status.mcp.error", tone: "err" },
+  unknown: { key: "status.mcp.unknown", tone: "idle" },
 };
 
-export const TYPE_LABEL: Record<string, string> = {
-  fullstack: "全栈",
-  frontend: "纯前端",
-  backend: "纯后端",
-  agent: "Agent 服务",
+export const TYPE_LABEL: Record<string, MessageKey> = {
+  fullstack: "type.fullstack",
+  frontend: "type.frontend",
+  backend: "type.backend",
+  agent: "type.agent",
 };
 
 export const TYPE_ICON: Record<string, "layers" | "grid" | "cpu" | "terminal"> = {
@@ -72,6 +83,12 @@ export const TYPE_ICON: Record<string, "layers" | "grid" | "cpu" | "terminal"> =
   frontend: "grid",
   backend: "terminal",
   agent: "cpu",
+};
+
+/** Resource kinds are shared by the overview table, template cards and dialogs. */
+export const RESOURCE_LABEL: Record<string, MessageKey> = {
+  storage: "common.storage",
+  database: "common.database",
 };
 
 export function toneClass(tone: Tone | undefined): string {

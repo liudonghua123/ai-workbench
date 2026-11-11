@@ -3,11 +3,12 @@
 import { useEffect, useRef } from "react";
 import { Icon } from "./Icon";
 import { cx } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 
 export function LogViewer({
   title,
   log,
-  empty = "暂无日志",
+  empty,
   live,
 }: {
   title: string;
@@ -16,6 +17,7 @@ export function LogViewer({
   live?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const { t } = useI18n();
 
   useEffect(() => {
     const node = ref.current;
@@ -40,7 +42,7 @@ export function LogViewer({
                 animation: "pulse 1.6s infinite",
               }}
             />
-            流式输出
+            {t("log.streaming")}
           </span>
         ) : null}
       </div>
@@ -61,7 +63,7 @@ export function LogViewer({
               </div>
             ))
         ) : (
-          <span style={{ color: "var(--term-dim)" }}>{empty}</span>
+          <span style={{ color: "var(--term-dim)" }}>{empty ?? t("log.empty")}</span>
         )}
       </div>
     </div>

@@ -5,17 +5,19 @@ import { Icon } from "@/components/Icon";
 import { Empty, Pill, Skeleton } from "@/components/ui";
 import { api } from "@/lib/api";
 import { clockTime, cx, eventTone, relativeTime } from "@/lib/format";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import type { EventItem } from "@/lib/types";
 
-const KINDS = [
-  { key: "all", label: "全部" },
-  { key: "project", label: "项目" },
-  { key: "deployment", label: "部署" },
-  { key: "agent", label: "Agent" },
-  { key: "file", label: "文件" },
+const KINDS: { key: string; labelKey: MessageKey }[] = [
+  { key: "all", labelKey: "common.all" },
+  { key: "project", labelKey: "event.kindProject" },
+  { key: "deployment", labelKey: "event.kindDeployment" },
+  { key: "agent", labelKey: "event.kindAgent" },
+  { key: "file", labelKey: "event.kindFile" },
 ];
 
 export default function EventsPage() {
+  const { t, locale } = useI18n();
   const [events, setEvents] = useState<EventItem[] | null>(null);
   const [kind, setKind] = useState("all");
   const [error, setError] = useState("");
@@ -37,14 +39,12 @@ export default function EventsPage() {
     <main className="content">
       <div className="page-head">
         <div>
-          <h1 className="page-title">事件流</h1>
-          <p className="page-desc">
-            控制面的全部副作用都会留下事件：创建、装配资源、部署、Agent 运行、文件写入。
-          </p>
+          <h1 className="page-title">{t("event.title")}</h1>
+          <p className="page-desc">{t("event.desc")}</p>
         </div>
         <div className="spacer" />
         <Pill tone="idle" icon="pulse">
-          {events?.length ?? 0} 条
+          {t("event.count", { n: events?.length ?? 0 })}
         </Pill>
       </div>
 
@@ -55,7 +55,7 @@ export default function EventsPage() {
             className={cx("btn btn-sm", kind === item.key ? "btn-primary" : "btn-ghost")}
             onClick={() => setKind(item.key)}
           >
-            {item.label}
+            {t(item.labelKey)}
           </button>
         ))}
       </div>
@@ -63,7 +63,7 @@ export default function EventsPage() {
       <section className="card">
         <div className="card-body" style={{ paddingTop: 8, paddingBottom: 8 }}>
           {error ? (
-            <Empty icon="close" title="无法读取事件" hint={error} />
+            <Empty icon="close" title={t("event.readFailed")} hint={error} />
           ) : events === null ? (
             <div className="stack">
               {Array.from({ length: 5 }).map((_, index) => (
@@ -71,7 +71,7 @@ export default function EventsPage() {
               ))}
             </div>
           ) : visible.length === 0 ? (
-            <Empty icon="pulse" title="暂无事件" hint="创建项目或部署后会在这里出现记录。" />
+            <Empty icon="pulse" title={t("event.empty")} hint={t("event.emptyHint")} />
           ) : (
             visible.map((event) => (
               <div className="event-row" key={event.id} style={{ padding: "10px 0" }}>
@@ -89,8 +89,8 @@ export default function EventsPage() {
                     ) : null}
                   </span>
                 </span>
-                <span className="event-time" title={clockTime(event.created_at)}>
-                  {relativeTime(event.created_at)}
+                <span className="event-time" title={clockTime(event.created_at, locale)}>
+                  {relativeTime(event.created_at, locale)}
                 </span>
               </div>
             ))
@@ -99,7 +99,7 @@ export default function EventsPage() {
       </section>
 
       <div className="row muted" style={{ marginTop: 12, gap: 6, fontSize: 11.5 }}>
-        <Icon name="clock" size={12} /> 事件保留在控制面数据库中，可作为审计与回放依据
+        <Icon name="clock" size={12} /> {t("event.footNote")}
       </div>
     </main>
   );

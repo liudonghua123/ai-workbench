@@ -5,10 +5,12 @@ import { Icon } from "@/components/Icon";
 import { CopyButton, Empty, Pill, Skeleton, StatusPill, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { MCP_STATUS, relativeTime } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 import type { McpServer } from "@/lib/types";
 
 export default function McpPage() {
   const { push } = useToast();
+  const { t, locale } = useI18n();
   const [servers, setServers] = useState<McpServer[] | null>(null);
   const [probing, setProbing] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -37,12 +39,12 @@ export default function McpPage() {
       setServers((prev) => prev?.map((item) => (item.id === result.id ? result : item)) ?? null);
       push(
         result.status === "healthy"
-          ? `${result.name} 探测成功 · ${result.tool_count} 个工具`
-          : `${result.name} 不可达：${result.probe_error || "连接失败"}`,
+          ? t("mcp.probeOk", { name: result.name, n: result.tool_count })
+          : t("mcp.probeErr", { name: result.name, error: result.probe_error || t("common.failed") }),
         result.status === "healthy" ? "ok" : "err",
       );
     } catch (err) {
-      push(err instanceof Error ? err.message : "探测失败", "err");
+      push(err instanceof Error ? err.message : t("mcp.probeFailed"), "err");
     } finally {
       setProbing(null);
     }
@@ -60,37 +62,40 @@ export default function McpPage() {
       });
       setOpen(false);
       setForm({ name: "", description: "", transport: "streamable_http", endpoint: "", command: "" });
-      push("MCP 服务已注册");
+      push(t("mcp.registered"));
       load();
     } catch (err) {
-      push(err instanceof Error ? err.message : "注册失败", "err");
+      push(err instanceof Error ? err.message : t("mcp.registerFailed"), "err");
     }
   };
 
   const remove = async (server: McpServer) => {
-    if (!window.confirm(`删除 MCP 服务「${server.name}」？`)) return;
+    if (!window.confirm(t("mcp.deleteConfirm", { name: server.name }))) return;
     try {
       await api.deleteMcp(server.id);
-      push("已删除");
+      push(t("mcp.deleted"));
       load();
     } catch (err) {
-      push(err instanceof Error ? err.message : "删除失败", "err");
+      push(err instanceof Error ? err.message : t("mcp.deleteFailed"), "err");
     }
   };
+
+  const [descBefore, descAfter] = t("mcp.desc").split("{path}");
 
   return (
     <main className="content">
       <div className="page-head">
         <div>
-          <h1 className="page-title">MCP 服务</h1>
+          <h1 className="page-title">{t("mcp.title")}</h1>
           <p className="page-desc">
-            系统自身的完整 API 已通过 streamable HTTP 暴露在 <code className="mono">/mcp</code>
-            ，Agent 与外部客户端使用同一套工具；这里还能注册并探测第三方 MCP。
+            {descBefore}
+            <code className="mono">/mcp</code>
+            {descAfter}
           </p>
         </div>
         <div className="spacer" />
         <button className="btn btn-primary" onClick={() => setOpen(true)}>
-          <Icon name="plus" size={13} /> 注册服务
+          <Icon name="plus" size={13} /> {t("mcp.register")}
         </button>
       </div>
 
@@ -102,7 +107,7 @@ export default function McpPage() {
         </div>
       ) : servers.length === 0 ? (
         <div className="card">
-          <Empty icon="plug" title="没有 MCP 服务" />
+          <Empty icon="plug" title={t("mcp.empty")} />
         </div>
       ) : (
         <div className="stack" style={{ gap: 14 }}>
@@ -115,7 +120,7 @@ export default function McpPage() {
                 <div style={{ minWidth: 0 }}>
                   <div className="row" style={{ gap: 6 }}>
                     <span className="card-title">{server.name}</span>
-                    {server.is_system ? <Pill tone="accent">内置</Pill> : null}
+                    {server.is_system ? <Pill tone="accent">{t("common.builtin")}</Pill> : null}
                     <span className="tag">{server.transport}</span>
                   </div>
                   <div className="muted" style={{ fontSize: 11.5 }}>
@@ -124,12 +129,21 @@ export default function McpPage() {
                 </div>
                 <div className="spacer" />
                 <StatusPill map={MCP_STATUS} value={server.status} />
-                <button className="btn btn-sm" onClick={() => probe(server)} disabled={probing === server.id}>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => probe(server)}
+                  disabled={probing === server.id}
+                >
                   <Icon name={probing === server.id ? "refresh" : "pulse"} size={12} />
-                  {probing === server.id ? "探测中…" : "探测"}
+                  {probing === server.id ? t("mcp.probing") : t("mcp.probe")}
                 </button>
                 {!server.is_system ? (
-                  <button className="icon-btn" title="删除" onClick={() => remove(server)}>
+                  <button
+                    className="icon-btn"
+                    title={t("common.delete")}
+                    aria-label={t("common.delete")}
+                    onClick={() => remove(server)}
+                  >
                     <Icon name="trash" size={13} />
                   </button>
                 ) : null}
@@ -145,20 +159,29 @@ export default function McpPage() {
 
                 <div>
                   <div className="row" style={{ gap: 6, marginBottom: 7 }}>
-                    <span className="muted" style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                      工具
+                    <span
+                      className="muted"
+                      style={{
+                        fontSize: 10.5,
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {t("common.tools")}
                     </span>
                     <span className="nav-count">{server.tool_count}</span>
                     {server.last_checked_at ? (
                       <span className="muted" style={{ fontSize: 10.5, marginLeft: "auto" }}>
-                        探测于 {relativeTime(server.last_checked_at)}
+                        {t("mcp.probedAt", {
+                          time: relativeTime(server.last_checked_at, locale),
+                        })}
                       </span>
                     ) : null}
                   </div>
                   <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
                     {server.tools.length === 0 ? (
                       <span className="muted" style={{ fontSize: 11.5 }}>
-                        尚未同步工具列表，点击「探测」获取
+                        {t("mcp.noTools")}
                       </span>
                     ) : (
                       server.tools.map((tool) => (
@@ -181,9 +204,12 @@ export default function McpPage() {
             <Icon name="code" size={14} />
           </span>
           <div style={{ minWidth: 0 }}>
-            <div className="card-title">接入客户端</div>
-            <pre className="terminal" style={{ marginTop: 8, padding: "10px 12px", fontSize: 11, maxHeight: 200 }}>
-{`{
+            <div className="card-title">{t("mcp.clientTitle")}</div>
+            <pre
+              className="terminal"
+              style={{ marginTop: 8, padding: "10px 12px", fontSize: 11, maxHeight: 200 }}
+            >
+              {`{
   "mcpServers": {
     "workbench": { "url": "http://127.0.0.1:8000/mcp" }
   }
@@ -194,25 +220,41 @@ export default function McpPage() {
       </section>
 
       {open ? (
-        <div className="overlay" onClick={(event) => event.target === event.currentTarget && setOpen(false)}>
+        <div
+          className="overlay"
+          onClick={(event) => event.target === event.currentTarget && setOpen(false)}
+        >
           <div className="modal" role="dialog" aria-modal="true">
             <div className="modal-head">
               <Icon name="plug" size={15} />
-              <span className="card-title">注册 MCP 服务</span>
+              <span className="card-title">{t("mcp.registerTitle")}</span>
               <div className="spacer" />
-              <button className="icon-btn" onClick={() => setOpen(false)}>
+              <button
+                className="icon-btn"
+                onClick={() => setOpen(false)}
+                aria-label={t("common.close")}
+              >
                 <Icon name="close" size={14} />
               </button>
             </div>
             <div className="modal-body stack" style={{ gap: 12 }}>
               <div className="grid grid-2" style={{ gap: 10 }}>
                 <div className="field">
-                  <label>名称</label>
-                  <input className="input mono" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="docs-search" />
+                  <label>{t("mcp.formName")}</label>
+                  <input
+                    className="input mono"
+                    value={form.name}
+                    onChange={(event) => setForm({ ...form, name: event.target.value })}
+                    placeholder="docs-search"
+                  />
                 </div>
                 <div className="field">
-                  <label>传输方式</label>
-                  <select className="select" value={form.transport} onChange={(event) => setForm({ ...form, transport: event.target.value })}>
+                  <label>{t("mcp.formTransport")}</label>
+                  <select
+                    className="select"
+                    value={form.transport}
+                    onChange={(event) => setForm({ ...form, transport: event.target.value })}
+                  >
                     <option value="streamable_http">streamable_http</option>
                     <option value="sse">sse</option>
                     <option value="stdio">stdio</option>
@@ -220,27 +262,42 @@ export default function McpPage() {
                 </div>
               </div>
               <div className="field">
-                <label>描述</label>
-                <input className="input" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="一句话说明这个服务提供什么能力" />
+                <label>{t("mcp.formDescription")}</label>
+                <input
+                  className="input"
+                  value={form.description}
+                  onChange={(event) => setForm({ ...form, description: event.target.value })}
+                  placeholder={t("mcp.formDescriptionPlaceholder")}
+                />
               </div>
               {form.transport === "stdio" ? (
                 <div className="field">
-                  <label>启动命令</label>
-                  <input className="input mono" value={form.command} onChange={(event) => setForm({ ...form, command: event.target.value })} placeholder="npx -y @modelcontextprotocol/server-filesystem" />
+                  <label>{t("mcp.formCommand")}</label>
+                  <input
+                    className="input mono"
+                    value={form.command}
+                    onChange={(event) => setForm({ ...form, command: event.target.value })}
+                    placeholder="npx -y @modelcontextprotocol/server-filesystem"
+                  />
                 </div>
               ) : (
                 <div className="field">
-                  <label>Endpoint</label>
-                  <input className="input mono" value={form.endpoint} onChange={(event) => setForm({ ...form, endpoint: event.target.value })} placeholder="http://127.0.0.1:9100/mcp" />
+                  <label>{t("mcp.formEndpoint")}</label>
+                  <input
+                    className="input mono"
+                    value={form.endpoint}
+                    onChange={(event) => setForm({ ...form, endpoint: event.target.value })}
+                    placeholder="http://127.0.0.1:9100/mcp"
+                  />
                 </div>
               )}
             </div>
             <div className="modal-foot">
               <button className="btn" onClick={() => setOpen(false)}>
-                取消
+                {t("common.cancel")}
               </button>
               <button className="btn btn-accent" onClick={create} disabled={!form.name.trim()}>
-                注册
+                {t("mcp.register")}
               </button>
             </div>
           </div>

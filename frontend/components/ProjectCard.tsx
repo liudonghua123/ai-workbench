@@ -4,10 +4,14 @@ import Link from "next/link";
 import { Icon } from "./Icon";
 import { CopyButton, Pill, StatusPill } from "./ui";
 import { PROJECT_STATUS, TYPE_ICON, TYPE_LABEL, clockTime, relativeTime } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 import type { Project } from "@/lib/types";
 
 export function ProjectCard({ project, compact }: { project: Project; compact?: boolean }) {
+  const { t, locale } = useI18n();
   const deploy = project.deployment;
+  const typeKey = TYPE_LABEL[project.type];
+
   return (
     <Link href={`/projects/${project.id}`} className="project-card">
       <div className="project-top">
@@ -17,13 +21,15 @@ export function ProjectCard({ project, compact }: { project: Project; compact?: 
         <div style={{ minWidth: 0, flex: 1 }}>
           <div className="project-name truncate">{project.name}</div>
           <div className="muted mono" style={{ fontSize: 11 }}>
-            {project.slug} · {TYPE_LABEL[project.type] ?? project.type}
+            {project.slug} · {typeKey ? t(typeKey) : project.type}
           </div>
         </div>
         <StatusPill map={PROJECT_STATUS} value={project.status} />
       </div>
 
-      {!compact ? <p className="project-desc">{project.description || "暂无描述"}</p> : null}
+      {!compact ? (
+        <p className="project-desc">{project.description || t("common.noDescription")}</p>
+      ) : null}
 
       <div className="project-url">
         <Icon name="globe" size={12} />
@@ -34,30 +40,39 @@ export function ProjectCard({ project, compact }: { project: Project; compact?: 
       <div className="project-meta">
         {project.resources.map((resource) => (
           <span className="tag" key={resource.id}>
-            {resource.kind === "storage" ? "storage" : "db"}:{resource.name.length > 16 ? `${resource.name.slice(0, 15)}…` : resource.name}
+            {resource.kind === "storage" ? "storage" : "db"}:
+            {resource.name.length > 16 ? `${resource.name.slice(0, 15)}…` : resource.name}
           </span>
         ))}
-        {project.resources.length === 0 ? <span className="tag">无资源</span> : null}
+        {project.resources.length === 0 ? <span className="tag">{t("common.noResources")}</span> : null}
       </div>
 
       <div className="project-foot">
         {deploy ? (
-          <Pill tone={deploy.status === "running" ? "ok" : deploy.status === "failed" ? "err" : "warn"} live={deploy.status === "running"}>
-            {deploy.version} · {deploy.status === "running" ? "运行中" : deploy.status === "failed" ? "部署失败" : "部署中"}
+          <Pill
+            tone={deploy.status === "running" ? "ok" : deploy.status === "failed" ? "err" : "warn"}
+            live={deploy.status === "running"}
+          >
+            {deploy.version} ·{" "}
+            {deploy.status === "running"
+              ? t("status.deploy.running")
+              : deploy.status === "failed"
+                ? t("status.deploy.failed")
+                : t("status.deploy.deploying")}
           </Pill>
         ) : (
-          <Pill tone="idle">未部署</Pill>
+          <Pill tone="idle">{t("common.notDeployed")}</Pill>
         )}
         <span className="muted" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
           <Icon name="clock" size={11} />
-          {relativeTime(project.updated_at)}
+          {relativeTime(project.updated_at, locale)}
         </span>
         <div className="spacer" />
         <span className="muted" style={{ fontSize: 11 }}>
-          {clockTime(project.created_at)}
+          {clockTime(project.created_at, locale)}
         </span>
         <span onClick={(event) => event.preventDefault()}>
-          <CopyButton value={project.url} label="复制访问地址" />
+          <CopyButton value={project.url} label={t("common.copyUrl")} />
         </span>
       </div>
     </Link>

@@ -6,18 +6,20 @@ import { ProjectCard } from "@/components/ProjectCard";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import { Empty, Pill, Skeleton } from "@/components/ui";
 import { api } from "@/lib/api";
-import { TYPE_LABEL, cx } from "@/lib/format";
+import { cx } from "@/lib/format";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import type { Project } from "@/lib/types";
 
-const FILTERS = [
-  { key: "all", label: "全部" },
-  { key: "fullstack", label: "全栈" },
-  { key: "frontend", label: "纯前端" },
-  { key: "backend", label: "纯后端" },
-  { key: "agent", label: "Agent" },
+const FILTERS: { key: string; labelKey: MessageKey }[] = [
+  { key: "all", labelKey: "common.all" },
+  { key: "fullstack", labelKey: "type.fullstack" },
+  { key: "frontend", labelKey: "type.frontend" },
+  { key: "backend", labelKey: "type.backend" },
+  { key: "agent", labelKey: "type.agent" },
 ];
 
 export default function ProjectsPage() {
+  const { t } = useI18n();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -44,14 +46,14 @@ export default function ProjectsPage() {
     });
   }, [projects, filter, query]);
 
+  const activeFilter = FILTERS.find((item) => item.key === filter);
+
   return (
     <main className="content">
       <div className="page-head">
         <div>
-          <h1 className="page-title">项目</h1>
-          <p className="page-desc">
-            每个项目对应一个独立工作区、一套对象存储与数据库、一个自动绑定的子域名。
-          </p>
+          <h1 className="page-title">{t("proj.title")}</h1>
+          <p className="page-desc">{t("proj.desc")}</p>
         </div>
         <div className="spacer" />
         <div className="row" style={{ gap: 8 }}>
@@ -62,13 +64,13 @@ export default function ProjectsPage() {
             <input
               className="input"
               style={{ paddingLeft: 30, width: 220 }}
-              placeholder="搜索项目 / 域名"
+              placeholder={t("proj.search")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
           <button className="btn btn-primary" onClick={() => setOpen(true)}>
-            <Icon name="plus" size={14} /> 新建
+            <Icon name="plus" size={14} /> {t("proj.new")}
           </button>
         </div>
       </div>
@@ -85,7 +87,7 @@ export default function ProjectsPage() {
               className={cx("btn btn-sm", filter === item.key ? "btn-primary" : "btn-ghost")}
               onClick={() => setFilter(item.key)}
             >
-              {item.label}
+              {t(item.labelKey)}
               <span className="mono" style={{ opacity: 0.6 }}>
                 {count}
               </span>
@@ -94,7 +96,7 @@ export default function ProjectsPage() {
         })}
         <div className="spacer" />
         <Pill tone="idle" icon="layers">
-          按创建时间倒序
+          {t("proj.sort")}
         </Pill>
       </div>
 
@@ -112,11 +114,11 @@ export default function ProjectsPage() {
         <div className="card">
           <Empty
             icon="layers"
-            title="没有匹配的项目"
-            hint="换个关键词或类型筛选，或者直接新建一个应用。"
+            title={t("proj.emptyTitle")}
+            hint={t("proj.emptyHint")}
             action={
               <button className="btn btn-sm" onClick={() => setOpen(true)}>
-                <Icon name="plus" size={13} /> 新建应用
+                <Icon name="plus" size={13} /> {t("proj.newApp")}
               </button>
             }
           />
@@ -129,10 +131,19 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      <CreateProjectDialog open={open} onClose={() => { setOpen(false); load(); }} />
+      <CreateProjectDialog
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          load();
+        }}
+      />
       <div style={{ marginTop: 18 }} className="muted">
         <span style={{ fontSize: 11.5 }}>
-          共 {visible.length} 个项目 · 类型：{FILTERS.filter((f) => f.key === filter).map((f) => f.label)[0] ?? TYPE_LABEL[filter]}
+          {t("proj.summary", {
+            n: visible.length,
+            type: activeFilter ? t(activeFilter.labelKey) : filter,
+          })}
         </span>
       </div>
     </main>

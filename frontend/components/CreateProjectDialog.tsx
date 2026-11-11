@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { Icon } from "./Icon";
 import { Pill, useToast } from "./ui";
 import { api } from "@/lib/api";
-import { cx, TYPE_ICON, TYPE_LABEL } from "@/lib/format";
+import { RESOURCE_LABEL, cx, TYPE_ICON, TYPE_LABEL } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 import type { Template } from "@/lib/types";
 
 export function CreateProjectDialog({
@@ -20,6 +21,7 @@ export function CreateProjectDialog({
 }) {
   const router = useRouter();
   const { push } = useToast();
+  const { t } = useI18n();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selected, setSelected] = useState<string>(presetTemplate ?? "fullstack-fastapi-nextjs");
   const [name, setName] = useState("");
@@ -64,7 +66,7 @@ export function CreateProjectDialog({
 
   const submit = async () => {
     if (!name.trim()) {
-      setError("请填写应用名称");
+      setError(t("dlg.nameRequired"));
       return;
     }
     setBusy(true);
@@ -78,11 +80,11 @@ export function CreateProjectDialog({
         variables,
         deploy,
       });
-      push(`已创建 ${project.name} · ${project.url}`);
+      push(t("dlg.created", { name: project.name, url: project.url }));
       onClose();
       router.push(`/projects/${project.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建失败");
+      setError(err instanceof Error ? err.message : t("dlg.createFailed"));
     } finally {
       setBusy(false);
     }
@@ -90,30 +92,30 @@ export function CreateProjectDialog({
 
   return createPortal(
     <div className="overlay" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal modal-lg" role="dialog" aria-modal="true" aria-label="创建应用">
+      <div className="modal modal-lg" role="dialog" aria-modal="true" aria-label={t("dlg.title")}>
         <div className="modal-head">
           <span className="brand-mark" style={{ width: 26, height: 26, borderRadius: 8 }}>
             <Icon name="plus" size={14} />
           </span>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>创建应用</div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{t("dlg.title")}</div>
             <div className="muted" style={{ fontSize: 11.5 }}>
-              选择模板 → 自动装配存储、数据库与域名
+              {t("dlg.subtitle")}
             </div>
           </div>
           <div className="spacer" />
-          <button className="icon-btn" onClick={onClose} aria-label="关闭">
+          <button className="icon-btn" onClick={onClose} aria-label={t("common.close")}>
             <Icon name="close" size={15} />
           </button>
         </div>
 
         <div className="modal-body stack" style={{ gap: 16 }}>
           <div className="field">
-            <label>模板</label>
+            <label>{t("dlg.template")}</label>
             <div className="tpl-grid">
               {templates.length === 0 ? (
                 <div className="muted" style={{ fontSize: 12 }}>
-                  正在读取模板…
+                  {t("dlg.loadingTemplates")}
                 </div>
               ) : (
                 templates.map((item) => (
@@ -128,19 +130,22 @@ export function CreateProjectDialog({
                       {item.name}
                       {item.tags.includes("recommended") ? (
                         <span style={{ marginLeft: "auto" }}>
-                          <Pill tone="accent">推荐</Pill>
+                          <Pill tone="accent">{t("common.recommended")}</Pill>
                         </span>
                       ) : null}
                     </div>
                     <div className="tpl-desc">{item.description}</div>
                     <div className="row" style={{ marginTop: 8, gap: 5, flexWrap: "wrap" }}>
-                      <span className="tag">{TYPE_LABEL[item.type]}</span>
-                      <span className="tag">{item.file_count} files</span>
-                      {item.resources.map((resource) => (
-                        <span className="tag" key={resource}>
-                          {resource === "storage" ? "对象存储" : "数据库"}
-                        </span>
-                      ))}
+                      <span className="tag">{t(TYPE_LABEL[item.type])}</span>
+                      <span className="tag">{t("common.files", { n: item.file_count })}</span>
+                      {item.resources.map((resource) => {
+                        const labelKey = RESOURCE_LABEL[resource];
+                        return (
+                          <span className="tag" key={resource}>
+                            {labelKey ? t(labelKey) : resource}
+                          </span>
+                        );
+                      })}
                     </div>
                   </button>
                 ))
@@ -150,17 +155,17 @@ export function CreateProjectDialog({
 
           <div className="grid grid-2" style={{ gap: 12 }}>
             <div className="field">
-              <label htmlFor="p-name">应用名称</label>
+              <label htmlFor="p-name">{t("dlg.name")}</label>
               <input
                 id="p-name"
                 className="input"
-                placeholder="例如：客户成功控制台"
+                placeholder={t("dlg.namePlaceholder")}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
             </div>
             <div className="field">
-              <label htmlFor="p-slug">子域名前缀（可选）</label>
+              <label htmlFor="p-slug">{t("dlg.slug")}</label>
               <input
                 id="p-slug"
                 className="input"
@@ -169,18 +174,19 @@ export function CreateProjectDialog({
                 onChange={(event) => setSlug(event.target.value)}
               />
               <span className="hint">
-                最终域名 <code className="mono">{(slug || "slug") + ".localtest.me"}</code>
+                {t("dlg.finalDomainPrefix")}{" "}
+                <code className="mono">{(slug || "slug") + ".localtest.me"}</code>
               </span>
             </div>
           </div>
 
           <div className="field">
-            <label htmlFor="p-desc">描述</label>
+            <label htmlFor="p-desc">{t("dlg.description")}</label>
             <textarea
               id="p-desc"
               className="textarea"
               rows={2}
-              placeholder="一句话说明这个应用做什么，会写入 README 与项目元数据"
+              placeholder={t("dlg.descriptionPlaceholder")}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
@@ -212,7 +218,7 @@ export function CreateProjectDialog({
               onChange={(event) => setDeploy(event.target.checked)}
               style={{ accentColor: "var(--accent)" }}
             />
-            创建后立即部署（写入部署记录并执行健康检查）
+            {t("dlg.deployNow")}
           </label>
 
           {error ? (
@@ -224,18 +230,18 @@ export function CreateProjectDialog({
 
         <div className="modal-foot">
           <button className="btn" onClick={onClose} disabled={busy}>
-            取消
+            {t("common.cancel")}
           </button>
           <button className="btn btn-accent" onClick={submit} disabled={busy || !name.trim()}>
             {busy ? (
               <>
                 <Icon name="refresh" size={14} />
-                正在装配…
+                {t("dlg.submitting")}
               </>
             ) : (
               <>
                 <Icon name="rocket" size={14} />
-                创建应用
+                {t("dlg.submit")}
               </>
             )}
           </button>

@@ -5,10 +5,12 @@ import { Icon } from "@/components/Icon";
 import { Empty, Pill, Skeleton, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { cx } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 import type { Skill } from "@/lib/types";
 
 export default function SkillsPage() {
   const { push } = useToast();
+  const { t } = useI18n();
   const [skills, setSkills] = useState<Skill[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -27,12 +29,17 @@ export default function SkillsPage() {
       const updated = await api.toggleSkill(skill.id);
       setSkills((prev) => prev?.map((item) => (item.id === updated.id ? updated : item)) ?? null);
       if (updated.enabled && updated.source === "path") {
-        push(`${updated.name} 已启用（可被 Agent 调用）`);
+        push(t("skill.toggledPath", { name: updated.name }));
       } else {
-        push(`${updated.name} ${updated.enabled ? "已启用" : "已停用"}`);
+        push(
+          t("skill.toggled", {
+            name: updated.name,
+            state: updated.enabled ? t("common.enabled") : t("common.disabled"),
+          }),
+        );
       }
     } catch (err) {
-      push(err instanceof Error ? err.message : "操作失败", "err");
+      push(err instanceof Error ? err.message : t("skill.opFailed"), "err");
     }
   };
 
@@ -40,29 +47,32 @@ export default function SkillsPage() {
     setBusy(true);
     try {
       const result = await api.scanSkills();
-      push(`扫描到 ${result.scanned} 个 skill · ${result.root}`);
+      push(t("skill.scanned", { n: result.scanned, root: result.root }));
       await load();
     } catch (err) {
-      push(err instanceof Error ? err.message : "扫描失败", "err");
+      push(err instanceof Error ? err.message : t("skill.scanFailed"), "err");
     } finally {
       setBusy(false);
     }
   };
 
+  const [descBefore, descAfter] = t("skill.desc").split("{path}");
+
   return (
     <main className="content">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Skills</h1>
+          <h1 className="page-title">{t("skill.title")}</h1>
           <p className="page-desc">
-            可复用的能力包：描述何时使用、需要哪些工具。扫描 <code className="mono">data/skills/*/SKILL.md</code>{" "}
-            即可热加载，Agent 绑定后按需调用。
+            {descBefore}
+            <code className="mono">data/skills/*/SKILL.md</code>
+            {descAfter}
           </p>
         </div>
         <div className="spacer" />
         <button className="btn" onClick={scan} disabled={busy}>
           <Icon name={busy ? "refresh" : "search"} size={13} />
-          {busy ? "扫描中…" : "扫描目录"}
+          {busy ? t("skill.scanning") : t("skill.scan")}
         </button>
       </div>
 
@@ -76,8 +86,8 @@ export default function SkillsPage() {
         <div className="card">
           <Empty
             icon="puzzle"
-            title="还没有 Skill"
-            hint="在 data/skills 下创建 <name>/SKILL.md，再点击扫描目录。"
+            title={t("skill.empty")}
+            hint={t("skill.emptyHint", { path: "<name>/SKILL.md" })}
           />
         </div>
       ) : (
@@ -108,7 +118,7 @@ export default function SkillsPage() {
 
               <div className="card-body stack" style={{ gap: 10, flex: 1 }}>
                 <p style={{ margin: 0, fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.6 }}>
-                  {skill.description || "暂无描述"}
+                  {skill.description || t("common.noDescription")}
                 </p>
                 <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
                   {skill.tools?.length ? (
@@ -119,21 +129,26 @@ export default function SkillsPage() {
                     ))
                   ) : (
                     <span className="muted" style={{ fontSize: 11.5 }}>
-                      未声明工具
+                      {t("skill.noTools")}
                     </span>
                   )}
                 </div>
               </div>
 
-              <div className="card-body row" style={{ borderTop: "1px solid var(--line)", paddingTop: 11 }}>
-                <Pill tone={skill.enabled ? "ok" : "idle"}>{skill.enabled ? "已启用" : "已停用"}</Pill>
+              <div
+                className="card-body row"
+                style={{ borderTop: "1px solid var(--line)", paddingTop: 11 }}
+              >
+                <Pill tone={skill.enabled ? "ok" : "idle"}>
+                  {skill.enabled ? t("common.enabled") : t("common.disabled")}
+                </Pill>
                 <div className="spacer" />
                 <button
                   className={cx("btn btn-sm", skill.enabled ? "" : "btn-accent")}
                   onClick={() => toggle(skill)}
                 >
                   <Icon name={skill.enabled ? "stop" : "play"} size={11} />
-                  {skill.enabled ? "停用" : "启用"}
+                  {skill.enabled ? t("common.disable") : t("common.enable")}
                 </button>
               </div>
             </section>

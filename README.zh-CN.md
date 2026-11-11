@@ -28,6 +28,7 @@ AI 工作台就是这套接口。你可视化创建项目，平台按约定自�
 | **MCP / Skills / Agents** | 三者都是一等公民，以数据形式存储、可视化增删改 |
 | **约定大于配置** | 工作区路径、桶名、库名、主域名、端口全部由 slug 推导 |
 | **云可替换** | 存储 / 数据库 / DNS / 部署统一在 Provider SPI 之后，换云只改一个环境变量 |
+| **双语 · 主题 · 可换导航** | 中英文（默认英文）、跟随系统/浅色/深色主题、导航可在侧边栏或顶栏之间切换 |
 
 ---
 
@@ -103,6 +104,37 @@ MCP 服务、Skills、Agents 都是数据行，用 id 相互关联 —— 所以
 
 ![事件流](docs/screenshots/12-events.png)
 
+### 偏好设置
+
+一个弹层同时管语言、主题、导航位置。三项都持久化到 localStorage，并在 hydration
+之前应用，所以不会出现"先闪一下错误主题"。
+
+![偏好设置](docs/screenshots/13-preferences.png)
+
+选「顶栏」会把导航整体搬到 header 里，释放侧边栏宽度给内容——宽屏上更划算。
+
+![顶栏导航](docs/screenshots/15-nav-top.png)
+
+同一套界面切到英文：
+
+![英文界面](docs/screenshots/01-dashboard.png)
+
+---
+
+## 国际化
+
+`lib/i18n.tsx` 里是一张扁平字典，且**键由英文对象推导**：`MessageKey` 从 `en` 生成，
+因此拼错键是编译错误，`zh` 少一条也是编译错误。日期与相对时间跟随当前语言，
+状态徽章存的是消息键而不是硬编码文案。
+
+```tsx
+const { t, locale } = useI18n();
+t("dash.kpi.projectsFoot", { ready: 3 });   // "3 ready" / "3 个就绪"
+relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
+```
+
+新增一门语言 = 加一个对象 + 在 `LOCALES` 里加一项。
+
 ---
 
 ## MCP 接口
@@ -158,6 +190,7 @@ REST 侧等价物：`/api/v1` 下 45 个端点，<http://localhost:8000/docs> �
 | 加 Agent 可用能力 | 加一个函数并注册进 `TOOLS` | 否 |
 | 换真实 LLM 替换规则规划器 | 替换 `agent_runtime.py` 的 `_plan()` | 否 |
 | 内嵌真正的 VS Code | 设 `WB_IDE_URL_TEMPLATE` | 否 |
+| 新增一门语言 | `lib/i18n.tsx` 加一个对象 | 否 |
 | 加新资源类型（如 Redis） | 新增 provider 能力 + 模板声明 | 是 |
 
 判断标准很简单：只要改动落在 **Provider / Template / Tool** 这个三角里，前端一行都不用动。只有新增"一类实体"才需要。
@@ -202,8 +235,9 @@ backend/
     models.py      9 张表
 frontend/
   app/             10 个路由，/projects/[id] 下五个标签页
-  components/      Rail · Topbar · CreateProjectDialog · LogViewer · Icon（全 SVG）
-  lib/             api · types · format
+  components/      Shell · Rail · Topbar · NavLinks · Preferences
+                   CreateProjectDialog · LogViewer · Icon（全 SVG）
+  lib/             api · types · format · i18n · prefs · nav
 docs/architecture.md   设计取舍、数据模型、扩展点
 scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 ```
@@ -212,9 +246,9 @@ scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 
 ## 已知限制
 
-单用户、无鉴权 · SQL 控制台无沙箱 · Agent 规划器是规则驱动而非 LLM · 前端文案仅中文、暂未 i18n · 同项目并发部署未加锁 · 项目创建跨 Provider 非原子。
+单用户、无鉴权 · SQL 控制台无沙箱 · Agent 规划器是规则驱动而非 LLM · 同项目并发部署未加锁 · 项目创建跨 Provider 非原子。
 
-每一条的推荐解法见[架构文档 §11](docs/architecture.md#11-已知限制与下一步)。
+每一条的推荐解法见[架构文档 §12](docs/architecture.md#12-已知限制与下一步)。
 
 ---
 

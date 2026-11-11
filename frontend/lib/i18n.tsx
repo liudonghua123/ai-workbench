@@ -1,0 +1,850 @@
+"use client";
+
+/**
+ * Lightweight, type-safe i18n.
+ *
+ * * `en` is the source of truth — `MessageKey` is derived from it, so a typo in a
+ *   key is a compile error and a missing `zh` entry is a compile error too.
+ * * Locale lives in localStorage (`wb-locale`), defaults to `en`.
+ * * `t()` supports `{name}` interpolation; arrays are joined with the locale's
+ *   list separator when passed via `tList()`.
+ */
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+
+export const LOCALES = ["en", "zh"] as const;
+export type Locale = (typeof LOCALES)[number];
+
+const LOCALE_KEY = "wb-locale";
+const DEFAULT_LOCALE: Locale = "en";
+
+const en = {
+  /* ---------------------------------------------------------------- nav */
+  "group.workspace": "Workspace",
+  "group.capabilities": "Capabilities",
+  "nav.dashboard": "Overview",
+  "nav.projects": "Projects",
+  "nav.templates": "Templates",
+  "nav.agents": "Agents",
+  "nav.mcp": "MCP servers",
+  "nav.skills": "Skills",
+  "nav.events": "Events",
+  "nav.brandSub": "control plane",
+  "nav.convention": "Convention",
+
+  /* -------------------------------------------------------- preferences */
+  "prefs.title": "Preferences",
+  "prefs.theme": "Theme",
+  "prefs.language": "Language",
+  "prefs.navigation": "Navigation",
+  "theme.system": "System",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "prefs.navRail": "Sidebar",
+  "prefs.navTop": "Top bar",
+
+  /* ------------------------------------------------------------- topbar */
+  "topbar.home": "Workbench",
+  "topbar.online": "API online",
+  "topbar.offline": "API offline",
+  "topbar.connecting": "Connecting",
+  "topbar.newApp": "New app",
+
+  /* ------------------------------------------------------------- common */
+  "common.save": "Save",
+  "common.saving": "Saving…",
+  "common.cancel": "Cancel",
+  "common.create": "Create",
+  "common.creating": "Creating…",
+  "common.delete": "Delete",
+  "common.refresh": "Refresh",
+  "common.copy": "Copy",
+  "common.copied": "Copied to clipboard",
+  "common.copyFailed": "Copy failed — select and copy manually",
+  "common.copyUrl": "Copy URL",
+  "common.search": "Search",
+  "common.all": "All",
+  "common.unknown": "Unknown",
+  "common.close": "Close",
+  "common.run": "Run",
+  "common.running": "Running…",
+  "common.loading": "Loading…",
+  "common.noDescription": "No description",
+  "common.noResources": "No resources",
+  "common.notDeployed": "Not deployed",
+  "common.unbound": "None bound",
+  "common.enabled": "Enabled",
+  "common.disabled": "Disabled",
+  "common.enable": "Enable",
+  "common.disable": "Disable",
+  "common.recommended": "Recommended",
+  "common.builtin": "Built-in",
+  "common.tools": "Tools",
+  "common.noTools": "No tools declared",
+  "common.files": "{n} files",
+  "common.items": "{n} items",
+  "common.failed": "Failed",
+  "common.backToProjects": "Back to projects",
+  "common.storage": "Object storage",
+  "common.database": "Database",
+  "log.empty": "No output yet",
+  "log.streaming": "streaming",
+
+  /* ------------------------------------------------------------- status */
+  "status.project.creating": "Creating",
+  "status.project.ready": "Ready",
+  "status.project.failed": "Failed",
+  "status.project.archived": "Archived",
+  "status.deploy.queued": "Queued",
+  "status.deploy.building": "Building",
+  "status.deploy.deploying": "Deploying",
+  "status.deploy.running": "Running",
+  "status.deploy.failed": "Failed",
+  "status.deploy.stopped": "Stopped",
+  "status.domain.active": "Active",
+  "status.domain.pending": "Pending DNS",
+  "status.domain.error": "Error",
+  "status.mcp.healthy": "Healthy",
+  "status.mcp.error": "Unreachable",
+  "status.mcp.unknown": "Not probed",
+
+  /* --------------------------------------------------------------- type */
+  "type.fullstack": "Fullstack",
+  "type.frontend": "Frontend only",
+  "type.backend": "Backend only",
+  "type.agent": "Agent service",
+
+  /* --------------------------------------------------------------- time */
+  "time.justNow": "just now",
+  "time.minutesAgo": "{n}m ago",
+  "time.hoursAgo": "{n}h ago",
+  "time.daysAgo": "{n}d ago",
+
+  /* ---------------------------------------------------------- dashboard */
+  "dash.title": "Workbench overview",
+  "dash.desc":
+    "Creating a project automatically provisions object storage, a database and a {domain} subdomain. The same API is exposed over MCP, so anything you can click, an agent can call.",
+  "dash.backendDown": "Cannot reach the backend API",
+  "dash.backendDownHint": "{error} — make sure the backend is running on {url}.",
+  "dash.kpi.projects": "Projects",
+  "dash.kpi.projectsFoot": "{ready} ready",
+  "dash.kpi.deployments": "Live deployments",
+  "dash.kpi.deploymentsFoot": "{total} total · {failed} failed",
+  "dash.kpi.agents": "Agents",
+  "dash.kpi.agentsFoot": "default model {model}",
+  "dash.kpi.capabilities": "MCP / Skills",
+  "dash.kpi.capabilitiesFoot": "{enabled} skills enabled",
+  "dash.providers.title": "Resource capabilities (pluggable providers)",
+  "dash.providers.hint": "Swap one env var to move to a real cloud",
+  "dash.providers.domain": "Domain",
+  "dash.providers.suffix": "Domain suffix",
+  "dash.recent.title": "Recent projects",
+  "dash.recent.all": "All projects",
+  "dash.recent.emptyTitle": "No projects yet",
+  "dash.recent.emptyHint":
+    "Create your first app from a template, or describe it to the agent on the right.",
+  "dash.agent.title": "Hand it to an agent",
+  "dash.agent.placeholder": "e.g. create a frontend-only launch page called \"Autumn Keynote\"",
+  "dash.agent.sample1": "Build a backend API service",
+  "dash.agent.sample2": "Create a fullstack admin console and deploy it",
+  "dash.agent.run": "Run agent",
+  "dash.agent.running": "Agent running…",
+  "dash.agent.ok": "Agent finished",
+  "dash.agent.problem": "Agent finished with issues",
+  "dash.agent.error": "Agent run failed",
+  "dash.agent.viewProjects": "View projects",
+  "dash.events.title": "Event stream",
+  "dash.events.all": "All",
+
+  /* ------------------------------------------------------------ projects */
+  "proj.title": "Projects",
+  "proj.desc":
+    "Every project gets its own workspace, its own object storage bucket and database, and an auto-bound subdomain.",
+  "proj.search": "Search projects / domains",
+  "proj.new": "New",
+  "proj.newApp": "New app",
+  "proj.sort": "Newest first",
+  "proj.emptyTitle": "No matching projects",
+  "proj.emptyHint": "Try another keyword or type filter, or just create a new app.",
+  "proj.summary": "{n} projects · type: {type}",
+
+  /* ----------------------------------------------------------- templates */
+  "tpl.title": "Templates",
+  "tpl.desc":
+    "A template is a bundle of conventions: runtime, required resources, variables and file manifest. Drop a {path} directory in to hot-plug a new one.",
+  "tpl.rescan": "Rescan",
+  "tpl.rescanned": "Rescanned — {n} templates",
+  "tpl.rescanFailed": "Rescan failed",
+  "tpl.empty": "No templates available",
+  "tpl.manifest": "File manifest",
+  "tpl.use": "Create app from this template",
+
+  /* -------------------------------------------------------------- agents */
+  "agent.title": "Agents",
+  "agent.desc":
+    "An agent is one goal plus a set of tools. Tools come from the system MCP (create project, edit files, deploy…); the harness can be swapped for agentscope and friends.",
+  "agent.new": "New agent",
+  "agent.empty": "No agents yet",
+  "agent.pick": "Pick an agent",
+  "agent.noProject": "No project bound",
+  "agent.goalTitle": "Give the agent a goal",
+  "agent.goalHint": "e.g. create a frontend-only launch page called \"Autumn Keynote\", then deploy it.",
+  "agent.calling": "Calling tools…",
+  "agent.placeholder": "Describe what you want, e.g. create a fullstack admin console and deploy it",
+  "agent.noOutput": "(no output)",
+  "agent.runFailed": "Run failed: {error}",
+  "agent.unknownError": "unknown error",
+  "agent.stepFailed": "The agent finished with failed steps",
+  "agent.created": "Agent created",
+  "agent.createFailed": "Creation failed",
+  "agent.boundMcp": "Bound MCP",
+  "agent.boundSkills": "Bound skills",
+  "agent.formKey": "Key",
+  "agent.formName": "Name",
+  "agent.formModel": "Model",
+  "agent.formScope": "Permission scope",
+  "agent.scopeReadonly": "readonly (inspect only)",
+  "agent.scopeProject": "project (may modify a project)",
+  "agent.scopeFull": "full (may create / delete)",
+  "agent.namePlaceholder": "Release bot",
+
+  /* ----------------------------------------------------------------- mcp */
+  "mcp.title": "MCP servers",
+  "mcp.desc":
+    "The platform's own API is exposed over streamable HTTP at {path}, so agents and external clients share one tool surface. You can also register and probe third-party MCP servers here.",
+  "mcp.register": "Register server",
+  "mcp.empty": "No MCP servers",
+  "mcp.probe": "Probe",
+  "mcp.probing": "Probing…",
+  "mcp.probeOk": "{name} is healthy — {n} tools",
+  "mcp.probeErr": "{name} is unreachable: {error}",
+  "mcp.probeFailed": "Probe failed",
+  "mcp.probedAt": "probed {time}",
+  "mcp.noTools": "Tool list not synced yet — hit Probe to fetch it",
+  "mcp.clientTitle": "Connect a client",
+  "mcp.registerTitle": "Register MCP server",
+  "mcp.formName": "Name",
+  "mcp.formTransport": "Transport",
+  "mcp.formDescription": "Description",
+  "mcp.formDescriptionPlaceholder": "One line on what this server offers",
+  "mcp.formCommand": "Command",
+  "mcp.formEndpoint": "Endpoint",
+  "mcp.registered": "MCP server registered",
+  "mcp.registerFailed": "Registration failed",
+  "mcp.deleteConfirm": "Delete MCP server \"{name}\"?",
+  "mcp.deleted": "Deleted",
+  "mcp.deleteFailed": "Delete failed",
+
+  /* -------------------------------------------------------------- skills */
+  "skill.title": "Skills",
+  "skill.desc":
+    "Reusable capability packs: they declare when to use them and which tools they need. Scan {path} to hot-load; a bound agent calls them on demand.",
+  "skill.scan": "Scan directory",
+  "skill.scanning": "Scanning…",
+  "skill.empty": "No skills yet",
+  "skill.emptyHint": "Create {path} then hit Scan directory.",
+  "skill.noTools": "No tools declared",
+  "skill.scanned": "Scanned {n} skills · {root}",
+  "skill.scanFailed": "Scan failed",
+  "skill.toggledPath": "{name} enabled — agents can call it now",
+  "skill.toggled": "{name} {state}",
+  "skill.opFailed": "Operation failed",
+
+  /* -------------------------------------------------------------- events */
+  "event.title": "Event stream",
+  "event.desc":
+    "Every side effect on the control plane leaves an event: creation, provisioning, deploys, agent runs, file writes.",
+  "event.count": "{n} events",
+  "event.kindProject": "Project",
+  "event.kindDeployment": "Deployment",
+  "event.kindAgent": "Agent",
+  "event.kindFile": "File",
+  "event.readFailed": "Cannot read events",
+  "event.empty": "No events yet",
+  "event.emptyHint": "Create a project or deploy something and entries will show up here.",
+  "event.footNote": "Events are kept in the control-plane database for auditing and replay",
+
+  /* -------------------------------------------------------- project page */
+  "detail.loadFailed": "Failed to load",
+  "detail.cannotLoad": "Cannot load project",
+  "detail.noDescription": "No description",
+  "detail.openApp": "Open app",
+  "detail.deploy": "Deploy",
+  "detail.deploying": "Deploying",
+  "detail.submitting": "Submitting…",
+  "detail.deploySubmitted": "Deployment {version} submitted",
+  "detail.deployFailed": "Deploy failed",
+  "detail.deleteConfirm":
+    "Delete project \"{name}\"? Its workspace files, bucket and database are removed too.",
+  "detail.deleted": "Project deleted",
+  "detail.deleteFailed": "Delete failed",
+  "detail.tabOverview": "Overview",
+  "detail.tabIde": "Code / IDE",
+  "detail.tabDeploy": "Deploys",
+  "detail.tabData": "Data",
+  "detail.tabSettings": "Settings",
+
+  /* --------------------------------------------------- project: overview */
+  "ov.runtime": "Runtime",
+  "ov.url": "URL",
+  "ov.port": "Local port",
+  "ov.runCommand": "Run command",
+  "ov.template": "Template",
+  "ov.workspace": "Workspace",
+  "ov.updated": "Last updated",
+  "ov.resources": "Cloud resources",
+  "ov.resourcesHint": "Provisioned by convention at creation time",
+  "ov.kind": "Kind",
+  "ov.name": "Name",
+  "ov.dsn": "Endpoint / DSN",
+  "ov.status": "Status",
+  "ov.noResources": "No resources provisioned",
+  "ov.noResourcesHint": "This template needs no extra cloud resources.",
+  "ov.recentDeploys": "Recent deploys",
+  "ov.redeploy": "Redeploy",
+  "ov.noDeploys": "No deployments yet",
+  "ov.noDeploysHint": "Deploying produces build logs and a health check result.",
+  "ov.domains": "Domain bindings",
+  "ov.noDomains": "No domains bound",
+  "ov.primary": "primary",
+  "ov.verify": "Re-check DNS",
+  "ov.env": "Environment variables",
+  "ov.envCount": "{n} vars",
+  "ov.noEnv": "No environment variables",
+  "ov.agentTitle": "Let an agent take over",
+  "ov.agentDesc":
+    "This project is registered in the system MCP. An agent reads files, sets env vars and triggers deploys with the same tool surface.",
+
+  /* ---------------------------------------------------------- project: ide */
+  "ide.codeServer": "code-server online",
+  "ide.openTab": "Open in new tab",
+  "ide.builtin": "Built-in editor",
+  "ide.builtinHint":
+    "Set {var} to embed a web VS Code (code-server / openvscode-server).",
+  "ide.workspace": "Workspace",
+  "ide.filter": "Filter files",
+  "ide.noFile": "No file selected",
+  "ide.unsaved": "Unsaved",
+  "ide.pick": "Pick a file to start editing",
+  "ide.pickHint": "Every editable file in the project is listed on the left.",
+  "ide.dirtyConfirm": "This file has unsaved changes. Switch anyway?",
+  "ide.readFailed": "Read failed",
+  "ide.saved": "Saved {path}",
+  "ide.saveFailed": "Save failed",
+
+  /* ----------------------------------------------------- project: deploy */
+  "dep.history": "Deployments",
+  "dep.empty": "Nothing deployed yet",
+  "dep.emptyHint": "A deploy generates a version, build log and health check.",
+  "dep.stop": "Stop",
+  "dep.refresh": "Refresh",
+  "dep.stopped": "Deployment stopped",
+  "dep.stopFailed": "Stop failed",
+  "dep.waiting": "Waiting for build output…",
+  "dep.pick": "Pick a deployment to see its log",
+
+  /* ------------------------------------------------------- project: data */
+  "data.console": "Database console",
+  "data.noDb": "No database",
+  "data.execute": "Execute",
+  "data.executing": "Executing…",
+  "data.providerNote":
+    "Goes through the shared provider interface — switching to a real cloud database changes no code",
+  "data.noDbProject": "This project has no database provisioned",
+  "data.noRows": "No rows returned",
+  "data.storage": "Object storage",
+  "data.emptyBucket": "Bucket is empty",
+  "data.emptyBucketHint": "Keys and sizes show up here once you upload objects.",
+
+  /* --------------------------------------------------- project: settings */
+  "set.env": "Environment variables",
+  "set.envHint": "Written to .env and injected on deploy",
+  "set.key": "Key",
+  "set.value": "Value",
+  "set.kind": "Type",
+  "set.secret": "secret",
+  "set.plain": "plain",
+  "set.markSecret": "Mark as secret",
+  "set.saveVar": "Save variable",
+  "set.envSaved": "Environment variable saved",
+  "set.saveFailed": "Save failed",
+  "set.domains": "Custom domains",
+  "set.subdomain": "Subdomain",
+  "set.bind": "Bind",
+  "set.bound": "Domain bound",
+  "set.bindFailed": "Binding failed",
+  "set.defaultSuffix": "Default suffix {suffix}",
+  "set.identity": "Project identity",
+  "set.projectId": "Project ID",
+  "set.slug": "Slug",
+  "set.createdAt": "Created",
+  "set.deleteCmd": "Delete command",
+  "set.dangerTitle": "Delete project",
+  "set.dangerDesc":
+    "Removes workspace files, the object storage bucket, the database and domain bindings. This cannot be undone.",
+  "set.deleteForever": "Delete permanently",
+  "set.verifyOk": "{fqdn} is resolving",
+  "set.verifyPending": "{fqdn} is still pending",
+  "set.verifyFailed": "Check failed",
+
+  /* -------------------------------------------------------------- dialog */
+  "dlg.title": "Create app",
+  "dlg.subtitle": "Pick a template → storage, database and domain are provisioned for you",
+  "dlg.template": "Template",
+  "dlg.loadingTemplates": "Loading templates…",
+  "dlg.name": "App name",
+  "dlg.namePlaceholder": "e.g. Customer success console",
+  "dlg.slug": "Subdomain prefix (optional)",
+  "dlg.finalDomainPrefix": "Final domain",
+  "dlg.submit": "Create app",
+  "dlg.submitting": "Provisioning…",
+  "dlg.description": "Description",
+  "dlg.descriptionPlaceholder":
+    "One line on what this app does — written into the README and project metadata",
+  "dlg.deployNow": "Deploy immediately after creation (writes a deployment record and runs a health check)",
+  "dlg.nameRequired": "Please enter an app name",
+  "dlg.created": "Created {name} · {url}",
+  "dlg.createFailed": "Creation failed",
+} as const;
+
+export type MessageKey = keyof typeof en;
+
+const zh: Record<MessageKey, string> = {
+  "group.workspace": "工作台",
+  "group.capabilities": "能力",
+  "nav.dashboard": "总览",
+  "nav.projects": "项目",
+  "nav.templates": "模板",
+  "nav.agents": "Agents",
+  "nav.mcp": "MCP 服务",
+  "nav.skills": "Skills",
+  "nav.events": "事件流",
+  "nav.brandSub": "control plane",
+  "nav.convention": "约定",
+
+  "prefs.title": "偏好设置",
+  "prefs.theme": "主题",
+  "prefs.language": "语言",
+  "prefs.navigation": "导航位置",
+  "theme.system": "跟随系统",
+  "theme.light": "浅色",
+  "theme.dark": "深色",
+  "prefs.navRail": "侧边栏",
+  "prefs.navTop": "顶栏",
+
+  "topbar.home": "工作台",
+  "topbar.online": "API 正常",
+  "topbar.offline": "API 离线",
+  "topbar.connecting": "连接中",
+  "topbar.newApp": "新建应用",
+
+  "common.save": "保存",
+  "common.saving": "保存中…",
+  "common.cancel": "取消",
+  "common.create": "创建",
+  "common.creating": "创建中…",
+  "common.delete": "删除",
+  "common.refresh": "刷新",
+  "common.copy": "复制",
+  "common.copied": "已复制到剪贴板",
+  "common.copyFailed": "复制失败，请手动选择",
+  "common.copyUrl": "复制访问地址",
+  "common.search": "搜索",
+  "common.all": "全部",
+  "common.unknown": "未知",
+  "common.close": "关闭",
+  "common.run": "运行",
+  "common.running": "执行中…",
+  "common.loading": "加载中…",
+  "common.noDescription": "暂无描述",
+  "common.noResources": "无资源",
+  "common.notDeployed": "未部署",
+  "common.unbound": "未绑定",
+  "common.enabled": "已启用",
+  "common.disabled": "已停用",
+  "common.enable": "启用",
+  "common.disable": "停用",
+  "common.recommended": "推荐",
+  "common.builtin": "内置",
+  "common.tools": "工具",
+  "common.noTools": "未声明工具",
+  "common.files": "{n} 个文件",
+  "common.items": "{n} 项",
+  "common.failed": "失败",
+  "common.backToProjects": "返回项目列表",
+  "common.storage": "对象存储",
+  "common.database": "数据库",
+  "log.empty": "暂无输出",
+  "log.streaming": "流式输出",
+
+  "status.project.creating": "创建中",
+  "status.project.ready": "就绪",
+  "status.project.failed": "失败",
+  "status.project.archived": "已归档",
+  "status.deploy.queued": "排队中",
+  "status.deploy.building": "构建中",
+  "status.deploy.deploying": "部署中",
+  "status.deploy.running": "运行中",
+  "status.deploy.failed": "失败",
+  "status.deploy.stopped": "已停止",
+  "status.domain.active": "已生效",
+  "status.domain.pending": "待解析",
+  "status.domain.error": "异常",
+  "status.mcp.healthy": "健康",
+  "status.mcp.error": "不可达",
+  "status.mcp.unknown": "未探测",
+
+  "type.fullstack": "全栈",
+  "type.frontend": "纯前端",
+  "type.backend": "纯后端",
+  "type.agent": "Agent 服务",
+
+  "time.justNow": "刚刚",
+  "time.minutesAgo": "{n} 分钟前",
+  "time.hoursAgo": "{n} 小时前",
+  "time.daysAgo": "{n} 天前",
+
+  "dash.title": "工作台总览",
+  "dash.desc":
+    "创建项目即自动装配对象存储、数据库与 {domain} 域名；同一套 API 通过 MCP 暴露给 Agent，人能点的，Agent 也能调。",
+  "dash.backendDown": "无法连接后端 API",
+  "dash.backendDownHint": "{error} — 请确认后端已在 {url} 运行。",
+  "dash.kpi.projects": "项目",
+  "dash.kpi.projectsFoot": "{ready} 个就绪",
+  "dash.kpi.deployments": "运行中部署",
+  "dash.kpi.deploymentsFoot": "累计 {total} 次 · 失败 {failed}",
+  "dash.kpi.agents": "Agents",
+  "dash.kpi.agentsFoot": "默认模型 {model}",
+  "dash.kpi.capabilities": "MCP / Skills",
+  "dash.kpi.capabilitiesFoot": "{enabled} 个 skill 已启用",
+  "dash.providers.title": "资源能力（Provider 可插拔）",
+  "dash.providers.hint": "改一个环境变量即可换成真实云",
+  "dash.providers.domain": "域名",
+  "dash.providers.suffix": "域名后缀",
+  "dash.recent.title": "最近项目",
+  "dash.recent.all": "全部项目",
+  "dash.recent.emptyTitle": "还没有项目",
+  "dash.recent.emptyHint": "从模板创建第一个应用，或用右侧的 Agent 用一句话生成。",
+  "dash.agent.title": "交给 Agent",
+  "dash.agent.placeholder": "例如：帮我创建一个纯前端的活动落地页，叫「秋季发布会」",
+  "dash.agent.sample1": "建一个后端 API 服务",
+  "dash.agent.sample2": "创建全栈管理台并部署",
+  "dash.agent.run": "运行 Agent",
+  "dash.agent.running": "Agent 执行中…",
+  "dash.agent.ok": "Agent 已完成执行",
+  "dash.agent.problem": "Agent 执行出现问题",
+  "dash.agent.error": "Agent 执行失败",
+  "dash.agent.viewProjects": "查看项目列表",
+  "dash.events.title": "事件流",
+  "dash.events.all": "全部",
+
+  "proj.title": "项目",
+  "proj.desc": "每个项目对应一个独立工作区、一套对象存储与数据库、一个自动绑定的子域名。",
+  "proj.search": "搜索项目 / 域名",
+  "proj.new": "新建",
+  "proj.newApp": "新建应用",
+  "proj.sort": "按创建时间倒序",
+  "proj.emptyTitle": "没有匹配的项目",
+  "proj.emptyHint": "换个关键词或类型筛选，或者直接新建一个应用。",
+  "proj.summary": "共 {n} 个项目 · 类型：{type}",
+
+  "tpl.title": "模板",
+  "tpl.desc":
+    "模板是「约定」的载体：声明运行时、资源需求、变量与文件清单，工作台据此装配项目。在 {path} 放入目录即可热插拔。",
+  "tpl.rescan": "重新扫描",
+  "tpl.rescanned": "已重新扫描，共 {n} 个模板",
+  "tpl.rescanFailed": "重载失败",
+  "tpl.empty": "没有可用模板",
+  "tpl.manifest": "文件清单",
+  "tpl.use": "用此模板创建应用",
+
+  "agent.title": "Agents",
+  "agent.desc":
+    "Agent = 一句话目标 + 一组工具。工具来自系统 MCP（创建项目、改文件、部署……），harness 可替换为 agentscope 等实现。",
+  "agent.new": "新建 Agent",
+  "agent.empty": "还没有 Agent",
+  "agent.pick": "选择一个 Agent",
+  "agent.noProject": "不绑定项目",
+  "agent.goalTitle": "给 Agent 一个目标",
+  "agent.goalHint": "例如：帮我创建一个纯前端的活动落地页，叫「秋季发布会」，并部署。",
+  "agent.calling": "正在调用工具…",
+  "agent.placeholder": "描述你想完成的事，例如：创建全栈管理台并部署",
+  "agent.noOutput": "（无输出）",
+  "agent.runFailed": "执行失败：{error}",
+  "agent.unknownError": "未知错误",
+  "agent.stepFailed": "Agent 执行存在失败步骤",
+  "agent.created": "Agent 已创建",
+  "agent.createFailed": "创建失败",
+  "agent.boundMcp": "绑定 MCP",
+  "agent.boundSkills": "绑定 Skills",
+  "agent.formKey": "Key",
+  "agent.formName": "名称",
+  "agent.formModel": "模型",
+  "agent.formScope": "权限范围",
+  "agent.scopeReadonly": "readonly（只读巡检）",
+  "agent.scopeProject": "project（可改项目）",
+  "agent.scopeFull": "full（可创建 / 删除）",
+  "agent.namePlaceholder": "发布机器人",
+
+  "mcp.title": "MCP 服务",
+  "mcp.desc":
+    "系统自身的完整 API 已通过 streamable HTTP 暴露在 {path}，Agent 与外部客户端使用同一套工具；这里还能注册并探测第三方 MCP。",
+  "mcp.register": "注册服务",
+  "mcp.empty": "没有 MCP 服务",
+  "mcp.probe": "探测",
+  "mcp.probing": "探测中…",
+  "mcp.probeOk": "{name} 探测成功 · {n} 个工具",
+  "mcp.probeErr": "{name} 不可达：{error}",
+  "mcp.probeFailed": "探测失败",
+  "mcp.probedAt": "探测于 {time}",
+  "mcp.noTools": "尚未同步工具列表，点击「探测」获取",
+  "mcp.clientTitle": "接入客户端",
+  "mcp.registerTitle": "注册 MCP 服务",
+  "mcp.formName": "名称",
+  "mcp.formTransport": "传输方式",
+  "mcp.formDescription": "描述",
+  "mcp.formDescriptionPlaceholder": "一句话说明这个服务提供什么能力",
+  "mcp.formCommand": "启动命令",
+  "mcp.formEndpoint": "Endpoint",
+  "mcp.registered": "MCP 服务已注册",
+  "mcp.registerFailed": "注册失败",
+  "mcp.deleteConfirm": "删除 MCP 服务「{name}」？",
+  "mcp.deleted": "已删除",
+  "mcp.deleteFailed": "删除失败",
+
+  "skill.title": "Skills",
+  "skill.desc":
+    "可复用的能力包：描述何时使用、需要哪些工具。扫描 {path} 即可热加载，Agent 绑定后按需调用。",
+  "skill.scan": "扫描目录",
+  "skill.scanning": "扫描中…",
+  "skill.empty": "还没有 Skill",
+  "skill.emptyHint": "在 data/skills 下创建 {path}，再点击扫描目录。",
+  "skill.noTools": "未声明工具",
+  "skill.scanned": "扫描到 {n} 个 skill · {root}",
+  "skill.scanFailed": "扫描失败",
+  "skill.toggledPath": "{name} 已启用（可被 Agent 调用）",
+  "skill.toggled": "{name} {state}",
+  "skill.opFailed": "操作失败",
+
+  "event.title": "事件流",
+  "event.desc":
+    "控制面的全部副作用都会留下事件：创建、装配资源、部署、Agent 运行、文件写入。",
+  "event.count": "{n} 条",
+  "event.kindProject": "项目",
+  "event.kindDeployment": "部署",
+  "event.kindAgent": "Agent",
+  "event.kindFile": "文件",
+  "event.readFailed": "无法读取事件",
+  "event.empty": "暂无事件",
+  "event.emptyHint": "创建项目或部署后会在这里出现记录。",
+  "event.footNote": "事件保留在控制面数据库中，可作为审计与回放依据",
+
+  "detail.loadFailed": "加载失败",
+  "detail.cannotLoad": "无法加载项目",
+  "detail.noDescription": "暂无描述",
+  "detail.openApp": "打开应用",
+  "detail.deploy": "部署",
+  "detail.deploying": "部署进行中",
+  "detail.submitting": "提交中…",
+  "detail.deploySubmitted": "已提交部署 {version}",
+  "detail.deployFailed": "部署失败",
+  "detail.deleteConfirm": "删除项目「{name}」？工作区文件、对象存储与数据库都会一并清理。",
+  "detail.deleted": "项目已删除",
+  "detail.deleteFailed": "删除失败",
+  "detail.tabOverview": "概览",
+  "detail.tabIde": "代码 / IDE",
+  "detail.tabDeploy": "部署",
+  "detail.tabData": "数据",
+  "detail.tabSettings": "设置",
+
+  "ov.runtime": "运行时",
+  "ov.url": "访问地址",
+  "ov.port": "本地端口",
+  "ov.runCommand": "启动命令",
+  "ov.template": "模板",
+  "ov.workspace": "工作区",
+  "ov.updated": "最后更新",
+  "ov.resources": "云资源",
+  "ov.resourcesHint": "创建项目时按约定自动装配",
+  "ov.kind": "类型",
+  "ov.name": "名称",
+  "ov.dsn": "端点 / DSN",
+  "ov.status": "状态",
+  "ov.noResources": "没有装配资源",
+  "ov.noResourcesHint": "该模板不需要额外云资源。",
+  "ov.recentDeploys": "最近部署",
+  "ov.redeploy": "重新部署",
+  "ov.noDeploys": "还没有部署记录",
+  "ov.noDeploysHint": "点击部署会生成构建日志与健康检查结果。",
+  "ov.domains": "域名绑定",
+  "ov.noDomains": "未绑定域名",
+  "ov.primary": "主域名",
+  "ov.verify": "重新校验解析",
+  "ov.env": "环境变量",
+  "ov.envCount": "{n} 项",
+  "ov.noEnv": "暂无环境变量",
+  "ov.agentTitle": "让 Agent 接手",
+  "ov.agentDesc":
+    "项目已注册到系统 MCP，Agent 可用同一套工具读取文件、改环境变量、触发部署。",
+
+  "ide.codeServer": "code-server 在线",
+  "ide.openTab": "新标签打开",
+  "ide.builtin": "内置编辑器",
+  "ide.builtinHint": "配置 {var} 可接入 Web 版 VS Code（code-server / openvscode-server）。",
+  "ide.workspace": "工作区",
+  "ide.filter": "过滤文件",
+  "ide.noFile": "未选择文件",
+  "ide.unsaved": "未保存",
+  "ide.pick": "选择一个文件开始编辑",
+  "ide.pickHint": "左侧列出项目全部可编辑文件。",
+  "ide.dirtyConfirm": "当前文件有未保存修改，确定切换？",
+  "ide.readFailed": "读取失败",
+  "ide.saved": "已保存 {path}",
+  "ide.saveFailed": "保存失败",
+
+  "dep.history": "部署记录",
+  "dep.empty": "还没有部署",
+  "dep.emptyHint": "部署会生成版本号、构建日志与健康检查。",
+  "dep.stop": "停止",
+  "dep.refresh": "刷新",
+  "dep.stopped": "已停止部署",
+  "dep.stopFailed": "停止失败",
+  "dep.waiting": "等待构建输出…",
+  "dep.pick": "选择一条部署记录查看日志",
+
+  "data.console": "数据库控制台",
+  "data.noDb": "无数据库",
+  "data.execute": "执行",
+  "data.executing": "执行中…",
+  "data.providerNote": "走统一 Provider 接口，切换到真实云数据库后代码不变",
+  "data.noDbProject": "该项目未装配数据库",
+  "data.noRows": "没有返回行",
+  "data.storage": "对象存储",
+  "data.emptyBucket": "桶内暂无对象",
+  "data.emptyBucketHint": "上传资源后这里会列出 key 与大小。",
+
+  "set.env": "环境变量",
+  "set.envHint": "写入 .env 并注入部署",
+  "set.key": "Key",
+  "set.value": "Value",
+  "set.kind": "类型",
+  "set.secret": "secret",
+  "set.plain": "plain",
+  "set.markSecret": "标记为密钥",
+  "set.saveVar": "保存变量",
+  "set.envSaved": "环境变量已保存",
+  "set.saveFailed": "保存失败",
+  "set.domains": "自定义域名",
+  "set.subdomain": "子域名",
+  "set.bind": "绑定",
+  "set.bound": "域名已绑定",
+  "set.bindFailed": "绑定失败",
+  "set.defaultSuffix": "默认后缀 {suffix}",
+  "set.identity": "项目标识",
+  "set.projectId": "项目 ID",
+  "set.slug": "Slug",
+  "set.createdAt": "创建时间",
+  "set.deleteCmd": "删除命令",
+  "set.dangerTitle": "删除项目",
+  "set.dangerDesc": "会清理工作区文件、对象存储桶、数据库与域名绑定，不可恢复。",
+  "set.deleteForever": "永久删除",
+  "set.verifyOk": "{fqdn} 解析已生效",
+  "set.verifyPending": "{fqdn} 仍在等待解析",
+  "set.verifyFailed": "校验失败",
+
+  "dlg.title": "创建应用",
+  "dlg.subtitle": "选择模板 → 自动装配存储、数据库与域名",
+  "dlg.template": "模板",
+  "dlg.loadingTemplates": "正在读取模板…",
+  "dlg.name": "应用名称",
+  "dlg.namePlaceholder": "例如：客户成功控制台",
+  "dlg.slug": "子域名前缀（可选）",
+  "dlg.finalDomainPrefix": "最终域名",
+  "dlg.submit": "创建应用",
+  "dlg.submitting": "正在装配…",
+  "dlg.description": "描述",
+  "dlg.descriptionPlaceholder": "一句话说明这个应用做什么，会写入 README 与项目元数据",
+  "dlg.deployNow": "创建后立即部署（写入部署记录并执行健康检查）",
+  "dlg.nameRequired": "请填写应用名称",
+  "dlg.created": "已创建 {name} · {url}",
+  "dlg.createFailed": "创建失败",
+};
+
+const DICT: Record<Locale, Record<MessageKey, string>> = { en, zh };
+
+export type Vars = Record<string, string | number>;
+
+function interpolate(template: string, vars?: Vars): string {
+  if (!vars) return template;
+  return template.replace(/\{(\w+)\}/g, (whole, key: string) =>
+    key in vars ? String(vars[key]) : whole,
+  );
+}
+
+export function translate(locale: Locale, key: MessageKey, vars?: Vars): string {
+  return interpolate(DICT[locale][key] ?? DICT.en[key] ?? key, vars);
+}
+
+type I18nApi = {
+  locale: Locale;
+  setLocale: (next: Locale) => void;
+  t: (key: MessageKey, vars?: Vars) => string;
+};
+
+const I18nContext = createContext<I18nApi | null>(null);
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(LOCALE_KEY);
+    if (stored === "en" || stored === "zh") setLocaleState(stored);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  }, [locale]);
+
+  const setLocale = useCallback((next: Locale) => {
+    setLocaleState(next);
+    localStorage.setItem(LOCALE_KEY, next);
+  }, []);
+
+  const t = useCallback(
+    (key: MessageKey, vars?: Vars) => translate(locale, key, vars),
+    [locale],
+  );
+
+  const api = useMemo(() => ({ locale, setLocale, t }), [locale, setLocale, t]);
+
+  return <I18nContext.Provider value={api}>{children}</I18nContext.Provider>;
+}
+
+/**
+ * Components rendered outside the provider (storybook, isolated tests) fall back
+ * to English instead of throwing.
+ */
+export function useI18n(): I18nApi {
+  const ctx = useContext(I18nContext);
+  if (ctx) return ctx;
+  return {
+    locale: DEFAULT_LOCALE,
+    setLocale: () => undefined,
+    t: (key, vars) => translate(DEFAULT_LOCALE, key, vars),
+  };
+}
+
+/** Reads the persisted locale outside React (e.g. before hydration). */
+export function storedLocale(): Locale {
+  if (typeof window === "undefined") return DEFAULT_LOCALE;
+  const value = localStorage.getItem(LOCALE_KEY);
+  return value === "zh" ? "zh" : DEFAULT_LOCALE;
+}

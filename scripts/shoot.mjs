@@ -1,32 +1,29 @@
 /**
  * End-to-end walk-through that also produces the README screenshots.
  *
- *   node scripts/shoot.mjs            # full run
- *   node scripts/shoot.mjs --errors   # also print console/page errors
+ *   node scripts/shoot.mjs
  *
- * Assumes backend on :8000 and frontend on :3000.
+ * Creates one browser context per preference combination (locale / nav / theme)
+ * so localStorage state never leaks between captures. Assumes the backend is on
+ * :8000 and the frontend on :3000.
  */
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const WEB = process.env.WEB_URL ?? "http://127.0.0.1:3000";
 const API = process.env.API_URL ?? "http://127.0.0.1:8000/api/v1";
-const OUT = new URL("../docs/screenshots/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const OUT = fileURLToPath(new URL("../docs/screenshots/", import.meta.url));
 
 const problems = [];
 const steps = [];
 
-async function shot(page, name, note) {
-  await page.waitForTimeout(650);
-  await page.screenshot({ path: `${OUT}${name}.png`, fullPage: false });
-  steps.push(`  ✓ ${name.padEnd(22)} ${note ?? ""}`);
-}
+const TABS = ["overview", "ide", "deploy", "data", "settings"];
 
 async function pickProject() {
   const res = await fetch(`${API}/projects`);
   const list = await res.json();
-  // prefer a fullstack project that already has a deployment
   return (
     list.find((p) => p.type === "fullstack" && p.deployment_count > 0) ??
     list.find((p) => p.type === "fullstack") ??
@@ -34,73 +31,115 @@ async function pickProject() {
   );
 }
 
-const run = async () => {
-  if (!existsSync(OUT)) await mkdir(OUT, { recursive: true });
-
-  const browser = await chromium.launch();
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-    deviceScaleFactor: 2,
-    colorScheme: "light",
-  });
-
+function watch(page) {
   page.on("console", (msg) => {
     if (msg.type() === "error") problems.push(`console: ${msg.text()}`);
   });
   page.on("pageerror", (err) => problems.push(`pageerror: ${err.message}`));
+}
 
-  // 1 — dashboard
-  await page.goto(WEB, { waitUntil: "networkidle" });
-  await shot(page, "01-dashboard", "工作台总览");
+/** Fresh context with the given preferences already in localStorage. */
+async function context(browser, { locale = "en", nav = "rail", theme = "light" } = {}) {
+  const ctx = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    deviceScaleFactor: 2,
+    colorScheme: "light",
+  });
+  await ctx.addInitScript(
+    ({ locale, nav, theme }) => {
+      localStorage.setItem("wb-locale", locale);
+      localStorage.setItem("wb-nav", nav);
+      localStorage.setItem("wb-theme", theme);
+    },
+    { locale, nav, theme },
+  );
+  const page = await ctx.newPage();
+  watch(page);
+  return { ctx, page };
+}
 
-  // 2 — templates
-  await page.goto(`${WEB}/templates`, { waitUntil: "networkidle" });
-  await shot(page, "02-templates", "模板目录");
+async function shot(page, name, note) {
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: `${OUT}${name}.png`, fullPage: false });
+  steps.push(`  ✓ ${name.padEnd(24)} ${note ?? ""}`);
+}
 
-  // 3 — create project dialog
-  await page.goto(`${WEB}/projects`, { waitUntil: "networkidle" });
-  const createBtn = page.getByRole("button", { name: /新建应用|创建应用/ }).first();
-  if (await createBtn.count()) {
-    await createBtn.click();
-    await shot(page, "03-create", "创建项目向导");
-    await page.keyboard.press("Escape");
-  }
+const run = async () => {
+  if (!existsSync(OUT)) await mkdir(OUT, { recursive: true });
 
-  // 4 — project detail tabs
+  const browser = await chromium.launch();
   const project = await pickProject();
   if (!project) throw new Error("no project to open");
 
-  for (const [tab, name] of [
-    ["概览", "04-project-overview"],
-    ["代码 / IDE", "05-project-ide"],
-    ["部署", "06-project-deploy"],
-    ["数据", "07-project-data"],
-    ["设置", "08-project-settings"],
-  ]) {
+  // ---------------------------------------------------------------- english
+  {
+    const { ctx, page } = await context(browser);
+
+    await page.goto(WEB, { waitUntil: "networkidle" });
+    await shot(page, "01-dashboard", "overview (en)");
+
+    await page.goto(`${WEB}/templates`, { waitUntil: "networkidle" });
+    await shot(page, "02-templates", "templates");
+
+    await page.goto(`${WEB}/projects`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: /New app|新建应用/ }).first().click();
+    await shot(page, "03-create", "create dialog");
+    await page.keyboard.press("Escape");
+    await page.reload({ waitUntil: "networkidle" });
+
+    for (const [index, name] of TABS.entries()) {
+      await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "networkidle" });
+      await page.getByRole("tab").nth(index).click();
+      await shot(page, `0${4 + index}-project-${name}`, name);
+    }
+
+    for (const [path, name, note] of [
+      ["/agents", "09-agents", "agents"],
+      ["/mcp", "10-mcp", "mcp servers"],
+      ["/skills", "11-skills", "skills"],
+      ["/events", "12-events", "events"],
+    ]) {
+      await page.goto(`${WEB}${path}`, { waitUntil: "networkidle" });
+      await shot(page, name, note);
+    }
+
+    // preferences popover
+    await page.goto(WEB, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Preferences" }).click();
+    await shot(page, "13-preferences", "preferences popover");
+
+    await ctx.close();
+  }
+
+  // ------------------------------------------------------------ dark theme
+  {
+    const { ctx, page } = await context(browser, { theme: "dark" });
+    await page.goto(WEB, { waitUntil: "networkidle" });
+    await shot(page, "14-dark", "dark theme");
+    await ctx.close();
+  }
+
+  // -------------------------------------------------------------- top nav
+  {
+    const { ctx, page } = await context(browser, { nav: "top" });
+    await page.goto(WEB, { waitUntil: "networkidle" });
+    await shot(page, "15-nav-top", "nav in top bar");
     await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "networkidle" });
-    const btn = page.getByRole("tab", { name: tab, exact: false }).first();
-    if (await btn.count()) await btn.click();
-    await shot(page, name, tab);
+    await shot(page, "16-nav-top-detail", "top nav + detail");
+    await ctx.close();
   }
 
-  // 5 — registries
-  for (const [path, name, note] of [
-    ["/agents", "09-agents", "Agent 管理"],
-    ["/mcp", "10-mcp", "MCP 管理"],
-    ["/skills", "11-skills", "Skills 管理"],
-    ["/events", "12-events", "事件流"],
-  ]) {
-    await page.goto(`${WEB}${path}`, { waitUntil: "networkidle" });
-    await shot(page, name, note);
+  // --------------------------------------------------------------- chinese
+  {
+    const { ctx, page } = await context(browser, { locale: "zh" });
+    await page.goto(WEB, { waitUntil: "networkidle" });
+    await shot(page, "17-dashboard-zh", "overview (zh)");
+    await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "networkidle" });
+    await shot(page, "18-project-zh", "project detail (zh)");
+    await page.goto(`${WEB}/agents`, { waitUntil: "networkidle" });
+    await shot(page, "19-agents-zh", "agents (zh)");
+    await ctx.close();
   }
-
-  // 6 — dark mode check
-  await page.goto(WEB, { waitUntil: "networkidle" });
-  await page.evaluate(() => {
-    document.documentElement.dataset.theme = "dark";
-    localStorage.setItem("wb-theme", "dark");
-  });
-  await shot(page, "13-dark", "深色主题");
 
   await browser.close();
 

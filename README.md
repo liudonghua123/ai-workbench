@@ -34,6 +34,7 @@ exposed over MCP so an agent can keep working on it afterwards. **There is no
 | **MCP / Skills / Agents** | All three are first-class, visually managed entities stored as data |
 | **Conventions over configuration** | Workspace path, bucket name, database name, primary domain and port all derive from the slug |
 | **Swappable cloud** | Storage / database / DNS / deploy sit behind one Provider SPI — swapping a cloud is one env var |
+| **Bilingual, themeable, relocatable UI** | English/Chinese (defaults to English), system/light/dark theme, and the nav can live in a sidebar or the top bar |
 
 ---
 
@@ -119,6 +120,41 @@ counter is built from.
 
 ![Events](docs/screenshots/12-events.png)
 
+### Preferences
+
+One popover controls language, theme and nav placement. All three persist to
+localStorage and are applied before hydration, so there's no flash of the wrong
+theme.
+
+![Preferences](docs/screenshots/13-preferences.png)
+
+Choosing **Top bar** moves the whole nav into the header and reclaims the
+sidebar width for content — useful on wide monitors.
+
+![Top nav](docs/screenshots/15-nav-top.png)
+
+The same UI in Chinese:
+
+![Chinese dashboard](docs/screenshots/17-dashboard-zh.png)
+
+---
+
+## Internationalisation
+
+The frontend ships two locales. `lib/i18n.tsx` holds a flat, **type-derived**
+dictionary: `MessageKey` is generated from the English object, so a mistyped key
+is a compile error and a missing Chinese entry is a compile error too. Date and
+relative-time formatting follow the active locale, and status badges store
+message keys instead of hard-coded labels.
+
+```tsx
+const { t, locale } = useI18n();
+t("dash.kpi.projectsFoot", { ready: 3 });   // "3 ready" / "3 个就绪"
+relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
+```
+
+Adding a locale means adding one object and one entry to `LOCALES`.
+
 ---
 
 ## The MCP surface
@@ -178,6 +214,7 @@ you gave it.
 | New agent capability | One function + entry in `TOOLS` | none |
 | Real LLM instead of the rule-based planner | Replace `_plan()` in `agent_runtime.py` | none |
 | Embed real VS Code | Set `WB_IDE_URL_TEMPLATE` | none |
+| New locale | One object in `lib/i18n.tsx` | none |
 | New resource kind (e.g. Redis) | New provider capability + template declaration | yes |
 
 The rule of thumb: anything inside the **Provider / Template / Tool** triangle
@@ -225,8 +262,9 @@ backend/
     models.py      9 tables
 frontend/
   app/             10 routes, five tabs under /projects/[id]
-  components/      Rail · Topbar · CreateProjectDialog · LogViewer · Icon (all SVG)
-  lib/             api · types · format
+  components/      Shell · Rail · Topbar · NavLinks · Preferences
+                   CreateProjectDialog · LogViewer · Icon (all SVG)
+  lib/             api · types · format · i18n · prefs · nav
 docs/architecture.md   design rationale, data model, extension points
 scripts/shoot.mjs      smoke walk-through that produces the screenshots above
 ```
@@ -236,10 +274,9 @@ scripts/shoot.mjs      smoke walk-through that produces the screenshots above
 ## Known limitations
 
 Single-user, no auth · SQL console has no sandbox · the agent planner is
-rule-based, not LLM-driven · frontend copy is Chinese-only (no i18n yet) ·
-concurrent deploys on one project aren't locked · project creation isn't
-atomic across providers. See
-[§11 of the architecture doc](docs/architecture.md#11-已知限制与下一步) for the
+rule-based, not LLM-driven · concurrent deploys on one project aren't locked ·
+project creation isn't atomic across providers. See
+[§12 of the architecture doc](docs/architecture.md#12-已知限制与下一步) for the
 recommended fix for each.
 
 ---

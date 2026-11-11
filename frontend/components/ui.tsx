@@ -2,7 +2,8 @@
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icon";
-import { cx, toneClass } from "@/lib/format";
+import { cx, toneClass, type StatusMap } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 
 /* ---------------------------------------------------------------- pills */
 
@@ -25,17 +26,13 @@ export function Pill({
   );
 }
 
-export function StatusPill({
-  map,
-  value,
-}: {
-  map: Record<string, { label: string; tone: "ok" | "warn" | "err" | "idle" | "accent" }>;
-  value: string;
-}) {
-  const meta = map[value] ?? { label: value, tone: "idle" as const };
+export function StatusPill({ map, value }: { map: StatusMap; value: string }) {
+  const { t } = useI18n();
+  const meta = map[value];
+  if (!meta) return <Pill tone="idle">{value}</Pill>;
   return (
     <Pill tone={meta.tone} live={meta.tone === "warn" || value === "running"}>
-      {meta.label}
+      {t(meta.key)}
     </Pill>
   );
 }
@@ -170,18 +167,21 @@ export function KV({ items }: { items: { k: string; v: ReactNode }[] }) {
   );
 }
 
-export function CopyButton({ value, label = "复制" }: { value: string; label?: string }) {
+export function CopyButton({ value, label }: { value: string; label?: string }) {
   const { push } = useToast();
+  const { t } = useI18n();
+  const title = label ?? t("common.copy");
   return (
     <button
       className="icon-btn"
-      title={label}
+      title={title}
+      aria-label={title}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(value);
-          push("已复制到剪贴板");
+          push(t("common.copied"));
         } catch {
-          push("复制失败，请手动选择", "err");
+          push(t("common.copyFailed"), "err");
         }
       }}
     >

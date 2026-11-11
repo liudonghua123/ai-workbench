@@ -362,6 +362,135 @@ textarea {
   gap: 8px;
 }
 
+/* --------------------------------------------------------------------------
+   nav placement: rail (default) vs top bar
+   -------------------------------------------------------------------------- */
+
+.shell[data-nav="top"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.brand-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+  margin-right: 2px;
+  border-right: 1px solid var(--line);
+  flex: none;
+}
+.brand-inline .brand-name {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topnav::-webkit-scrollbar {
+  display: none;
+}
+
+.topnav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  flex: none;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.topnav-item:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.topnav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.topnav-item .nav-count {
+  margin-left: 0;
+}
+
+/* --------------------------------------------------------------------------
+   preferences popover
+   -------------------------------------------------------------------------- */
+
+.prefs {
+  position: relative;
+}
+
+.prefs-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 272px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  z-index: 70;
+  animation: rise 0.16s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.prefs-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prefs-label {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface-3);
+}
+.seg button {
+  flex: 1;
+  height: 27px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.seg button:hover {
+  color: var(--ink-2);
+}
+.seg button.active {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(20, 20, 26, 0.12);
+}
+
 .content {
   padding: 26px 30px 70px;
   width: 100%;

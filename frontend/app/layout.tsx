@@ -1,32 +1,30 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Rail } from "@/components/Rail";
-import { Topbar } from "@/components/Topbar";
+import { Shell } from "@/components/Shell";
 import { ToastProvider } from "@/components/ui";
-import { themeScript } from "@/components/ThemeToggle";
+import { I18nProvider } from "@/lib/i18n";
+import { PrefsProvider, themeScript } from "@/lib/prefs";
 
 export const metadata: Metadata = {
-  title: "AI Workbench · 可视化应用工作台",
+  title: "AI Workbench",
   description:
-    "可视化创建项目、自动装配云资源与域名、在线编辑调试部署，并统一管理 MCP / Skills / Agents。",
+    "Visual control plane: scaffold projects, provision cloud storage, databases and domains, edit and deploy code, and manage MCP / Skills / Agents in one place.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
-        <ToastProvider>
-          <div className="shell">
-            <Rail />
-            <div className="main">
-              <Topbar />
-              {children}
-            </div>
-          </div>
-        </ToastProvider>
+        <I18nProvider>
+          <PrefsProvider>
+            <ToastProvider>
+              <Shell>{children}</Shell>
+            </ToastProvider>
+          </PrefsProvider>
+        </I18nProvider>
       </body>
     </html>
   );

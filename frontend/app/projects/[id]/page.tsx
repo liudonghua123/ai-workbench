@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
-import { CopyButton, Empty, Pill, Skeleton, StatusPill, Tabs, useToast } from "@/components/ui";
+import { CopyButton, Empty, Skeleton, StatusPill, Tabs, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { DEPLOY_STATUS, PROJECT_STATUS, TYPE_ICON, TYPE_LABEL, cx } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 import type { Deployment, EnvVar, Project } from "@/lib/types";
 import { DataTab, DeployTab, IdeTab, OverviewTab, SettingsTab } from "./tabs";
 
@@ -18,12 +19,18 @@ export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { push } = useToast();
+  const { t } = useI18n();
   const projectId = params?.id as string;
 
   const [project, setProject] = useState<Project | null>(null);
   const [env, setEnv] = useState<EnvVar[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
-  const [ide, setIde] = useState<{ vscode_url: string; available: boolean; repo_path: string; note: string } | null>(null);
+  const [ide, setIde] = useState<{
+    vscode_url: string;
+    available: boolean;
+    repo_path: string;
+    note: string;
+  } | null>(null);
   const [tab, setTab] = useState<TabKey>("overview");
   const [error, setError] = useState("");
   const [deploying, setDeploying] = useState(false);
@@ -40,9 +47,9 @@ export default function ProjectDetailPage() {
       setDeployments(deps);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载失败");
+      setError(err instanceof Error ? err.message : t("detail.loadFailed"));
     }
-  }, [projectId]);
+  }, [projectId, t]);
 
   useEffect(() => {
     load();
@@ -68,11 +75,11 @@ export default function ProjectDetailPage() {
     setDeploying(true);
     try {
       const dep = await api.deploy(projectId);
-      push(`已提交部署 ${dep.version}`);
+      push(t("detail.deploySubmitted", { version: dep.version }));
       setTab("deploy");
       await load();
     } catch (err) {
-      push(err instanceof Error ? err.message : "部署失败", "err");
+      push(err instanceof Error ? err.message : t("detail.deployFailed"), "err");
     } finally {
       setDeploying(false);
     }
@@ -80,25 +87,25 @@ export default function ProjectDetailPage() {
 
   const remove = async () => {
     if (!project) return;
-    if (!window.confirm(`删除项目「${project.name}」？工作区文件、对象存储与数据库都会一并清理。`)) return;
+    if (!window.confirm(t("detail.deleteConfirm", { name: project.name }))) return;
     try {
       await api.deleteProject(project.id);
-      push("项目已删除");
+      push(t("detail.deleted"));
       router.push("/projects");
     } catch (err) {
-      push(err instanceof Error ? err.message : "删除失败", "err");
+      push(err instanceof Error ? err.message : t("detail.deleteFailed"), "err");
     }
   };
 
   const tabs = useMemo(
     () => [
-      { key: "overview" as const, label: "概览" },
-      { key: "ide" as const, label: "代码 / IDE" },
-      { key: "deploy" as const, label: "部署", count: deployments.length },
-      { key: "data" as const, label: "数据" },
-      { key: "settings" as const, label: "设置" },
+      { key: "overview" as const, label: t("detail.tabOverview") },
+      { key: "ide" as const, label: t("detail.tabIde") },
+      { key: "deploy" as const, label: t("detail.tabDeploy"), count: deployments.length },
+      { key: "data" as const, label: t("detail.tabData") },
+      { key: "settings" as const, label: t("detail.tabSettings") },
     ],
-    [deployments.length],
+    [deployments.length, t],
   );
 
   if (error) {
@@ -107,11 +114,11 @@ export default function ProjectDetailPage() {
         <div className="card">
           <Empty
             icon="close"
-            title="无法加载项目"
+            title={t("detail.cannotLoad")}
             hint={error}
             action={
               <Link href="/projects" className="btn btn-sm">
-                返回项目列表
+                {t("common.backToProjects")}
               </Link>
             }
           />
@@ -132,6 +139,8 @@ export default function ProjectDetailPage() {
     );
   }
 
+  const typeKey = TYPE_LABEL[project.type];
+
   return (
     <main className="content">
       <div className="page-head" style={{ alignItems: "flex-start" }}>
@@ -147,10 +156,10 @@ export default function ProjectDetailPage() {
             {latest ? <StatusPill map={DEPLOY_STATUS} value={latest.status} /> : null}
           </div>
           <p className="page-desc" style={{ marginTop: 4 }}>
-            {project.description || "暂无描述"}
+            {project.description || t("detail.noDescription")}
           </p>
           <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-            <span className="tag">{TYPE_LABEL[project.type] ?? project.type}</span>
+            <span className="tag">{typeKey ? t(typeKey) : project.type}</span>
             <span className="tag">{project.template_key}</span>
             <span className="tag">:{project.port}</span>
             {project.git_initialized ? <span className="tag">git</span> : null}
@@ -158,21 +167,15 @@ export default function ProjectDetailPage() {
         </div>
         <div className="spacer" />
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          <a
-            className="btn"
-            href={project.url}
-            target="_blank"
-            rel="noreferrer"
-            title={project.url}
-          >
-            <Icon name="external" size={13} /> 打开应用
+          <a className="btn" href={project.url} target="_blank" rel="noreferrer" title={project.url}>
+            <Icon name="external" size={13} /> {t("detail.openApp")}
           </a>
           <span style={{ display: "inline-flex" }}>
-            <CopyButton value={project.url} label="复制访问地址" />
+            <CopyButton value={project.url} label={t("common.copyUrl")} />
           </span>
           <button className="btn btn-accent" onClick={deploy} disabled={deploying || busy}>
             <Icon name={busy ? "refresh" : "rocket"} size={13} />
-            {busy ? "部署进行中" : deploying ? "提交中…" : "部署"}
+            {busy ? t("detail.deploying") : deploying ? t("detail.submitting") : t("detail.deploy")}
           </button>
         </div>
       </div>
@@ -180,7 +183,13 @@ export default function ProjectDetailPage() {
       <Tabs tabs={tabs} value={tab} onChange={setTab} />
 
       {tab === "overview" ? (
-        <OverviewTab project={project} deployments={deployments} env={env} onDeploy={deploy} busy={busy} />
+        <OverviewTab
+          project={project}
+          deployments={deployments}
+          env={env}
+          onDeploy={deploy}
+          busy={busy}
+        />
       ) : null}
       {tab === "ide" ? <IdeTab project={project} ide={ide} /> : null}
       {tab === "deploy" ? (
@@ -194,7 +203,13 @@ export default function ProjectDetailPage() {
       ) : null}
       {tab === "data" ? <DataTab project={project} /> : null}
       {tab === "settings" ? (
-        <SettingsTab project={project} env={env} onEnvChange={setEnv} onDelete={remove} onRefresh={load} />
+        <SettingsTab
+          project={project}
+          env={env}
+          onEnvChange={setEnv}
+          onDelete={remove}
+          onRefresh={load}
+        />
       ) : null}
 
       <div className={cx("row", "muted")} style={{ marginTop: 20, gap: 6, fontSize: 11.5 }}>

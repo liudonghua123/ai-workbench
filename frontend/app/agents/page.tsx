@@ -5,17 +5,21 @@ import { Icon } from "@/components/Icon";
 import { Empty, Pill, Skeleton, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { cx } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 import type { Agent, AgentRun, Project } from "@/lib/types";
 
 export default function AgentsPage() {
   const { push } = useToast();
+  const { t } = useI18n();
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeKey, setActiveKey] = useState<string>("");
   const [prompt, setPrompt] = useState("");
   const [projectId, setProjectId] = useState<string>("");
   const [running, setRunning] = useState(false);
-  const [thread, setThread] = useState<{ role: "user" | "agent"; text: string; run?: AgentRun }[]>([]);
+  const [thread, setThread] = useState<{ role: "user" | "agent"; text: string; run?: AgentRun }[]>(
+    [],
+  );
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ key: "", name: "", model: "", scope: "project" });
   const threadRef = useRef<HTMLDivElement>(null);
@@ -53,14 +57,19 @@ export default function AgentsPage() {
       const result = await api.runAgent(active.key, text, projectId || undefined);
       setThread((prev) => [
         ...prev,
-        { role: "agent", text: result.output || "（无输出）", run: result },
+        { role: "agent", text: result.output || t("agent.noOutput"), run: result },
       ]);
-      if (result.status !== "succeeded") push("Agent 执行存在失败步骤", "err");
+      if (result.status !== "succeeded") push(t("agent.stepFailed"), "err");
       load();
     } catch (err) {
       setThread((prev) => [
         ...prev,
-        { role: "agent", text: `执行失败：${err instanceof Error ? err.message : "未知错误"}` },
+        {
+          role: "agent",
+          text: t("agent.runFailed", {
+            error: err instanceof Error ? err.message : t("agent.unknownError"),
+          }),
+        },
       ]);
     } finally {
       setRunning(false);
@@ -78,10 +87,10 @@ export default function AgentsPage() {
       });
       setCreating(false);
       setForm({ key: "", name: "", model: "", scope: "project" });
-      push("Agent 已创建");
+      push(t("agent.created"));
       load();
     } catch (err) {
-      push(err instanceof Error ? err.message : "创建失败", "err");
+      push(err instanceof Error ? err.message : t("agent.createFailed"), "err");
     }
   };
 
@@ -89,15 +98,12 @@ export default function AgentsPage() {
     <main className="content">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Agents</h1>
-          <p className="page-desc">
-            Agent = 一句话目标 + 一组工具。工具来自系统 MCP（创建项目、改文件、部署……），
-            harness 可替换为 agentscope 等实现。
-          </p>
+          <h1 className="page-title">{t("agent.title")}</h1>
+          <p className="page-desc">{t("agent.desc")}</p>
         </div>
         <div className="spacer" />
         <button className="btn" onClick={() => setCreating(true)}>
-          <Icon name="plus" size={13} /> 新建 Agent
+          <Icon name="plus" size={13} /> {t("agent.new")}
         </button>
       </div>
 
@@ -108,7 +114,7 @@ export default function AgentsPage() {
               <Skeleton height={52} />
             </div>
           ) : agents.length === 0 ? (
-            <Empty icon="cpu" title="还没有 Agent" />
+            <Empty icon="cpu" title={t("agent.empty")} />
           ) : (
             <div className="stack" style={{ gap: 3 }}>
               {agents.map((agent) => (
@@ -121,7 +127,10 @@ export default function AgentsPage() {
                   }}
                 >
                   <span className="agent-avatar">
-                    <Icon name={agent.permission_scope === "readonly" ? "shield" : "spark"} size={14} />
+                    <Icon
+                      name={agent.permission_scope === "readonly" ? "shield" : "spark"}
+                      size={14}
+                    />
                   </span>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div className="row" style={{ gap: 6 }}>
@@ -146,7 +155,7 @@ export default function AgentsPage() {
               <Icon name="cpu" size={13} />
             </span>
             <div style={{ minWidth: 0 }}>
-              <div className="card-title">{active?.name ?? "选择一个 Agent"}</div>
+              <div className="card-title">{active?.name ?? t("agent.pick")}</div>
               <div className="muted mono" style={{ fontSize: 10.5 }}>
                 {active?.model ?? "—"} · harness: local
               </div>
@@ -158,7 +167,7 @@ export default function AgentsPage() {
               value={projectId}
               onChange={(event) => setProjectId(event.target.value)}
             >
-              <option value="">不绑定项目</option>
+              <option value="">{t("agent.noProject")}</option>
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
@@ -171,12 +180,8 @@ export default function AgentsPage() {
             {thread.length === 0 ? (
               <Empty
                 icon="spark"
-                title="给 Agent 一个目标"
-                hint={
-                  active?.system_prompt
-                    ? active.system_prompt
-                    : "例如：帮我创建一个纯前端的活动落地页，叫「秋季发布会」，并部署。"
-                }
+                title={t("agent.goalTitle")}
+                hint={active?.system_prompt ? active.system_prompt : t("agent.goalHint")}
               />
             ) : (
               thread.map((item, index) =>
@@ -208,7 +213,7 @@ export default function AgentsPage() {
               <div className="bubble bubble-agent">
                 <span className="row" style={{ gap: 8, color: "var(--ink-3)" }}>
                   <Icon name="refresh" size={13} />
-                  正在调用工具…
+                  {t("agent.calling")}
                 </span>
               </div>
             ) : null}
@@ -218,7 +223,7 @@ export default function AgentsPage() {
             <textarea
               className="textarea"
               rows={1}
-              placeholder="描述你想完成的事，例如：创建全栈管理台并部署"
+              placeholder={t("agent.placeholder")}
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
@@ -226,7 +231,7 @@ export default function AgentsPage() {
               }}
             />
             <button className="btn btn-accent" onClick={run} disabled={running || !prompt.trim()}>
-              <Icon name="play" size={13} /> 运行
+              <Icon name="play" size={13} /> {t("common.run")}
             </button>
           </div>
         </section>
@@ -235,61 +240,42 @@ export default function AgentsPage() {
       {active ? (
         <section className="card card-pad" style={{ marginTop: 16 }}>
           <div className="row" style={{ gap: 14, flexWrap: "wrap" }}>
-            <div className="stack" style={{ gap: 4 }}>
-              <span className="muted" style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                绑定 MCP
-              </span>
-              <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
-                {(active.mcp_servers ?? []).length ? (
-                  active.mcp_servers!.map((name) => (
-                    <span className="tag" key={name}>
-                      <Icon name="plug" size={10} /> {name}
-                    </span>
-                  ))
-                ) : (
-                  <span className="muted" style={{ fontSize: 11.5 }}>
-                    未绑定
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="stack" style={{ gap: 4 }}>
-              <span className="muted" style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                绑定 Skills
-              </span>
-              <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
-                {(active.skills ?? []).length ? (
-                  active.skills!.map((name) => (
-                    <span className="tag" key={name}>
-                      <Icon name="puzzle" size={10} /> {name}
-                    </span>
-                  ))
-                ) : (
-                  <span className="muted" style={{ fontSize: 11.5 }}>
-                    未绑定
-                  </span>
-                )}
-              </div>
-            </div>
+            <Binding
+              label={t("agent.boundMcp")}
+              icon="plug"
+              items={active.mcp_servers}
+            />
+            <Binding
+              label={t("agent.boundSkills")}
+              icon="puzzle"
+              items={active.skills}
+            />
           </div>
         </section>
       ) : null}
 
       {creating ? (
-        <div className="overlay" onClick={(event) => event.target === event.currentTarget && setCreating(false)}>
+        <div
+          className="overlay"
+          onClick={(event) => event.target === event.currentTarget && setCreating(false)}
+        >
           <div className="modal" role="dialog" aria-modal="true">
             <div className="modal-head">
               <Icon name="cpu" size={15} />
-              <span className="card-title">新建 Agent</span>
+              <span className="card-title">{t("agent.new")}</span>
               <div className="spacer" />
-              <button className="icon-btn" onClick={() => setCreating(false)}>
+              <button
+                className="icon-btn"
+                onClick={() => setCreating(false)}
+                aria-label={t("common.close")}
+              >
                 <Icon name="close" size={14} />
               </button>
             </div>
             <div className="modal-body stack" style={{ gap: 12 }}>
               <div className="grid grid-2" style={{ gap: 10 }}>
                 <div className="field">
-                  <label>Key</label>
+                  <label>{t("agent.formKey")}</label>
                   <input
                     className="input mono"
                     placeholder="release-bot"
@@ -298,10 +284,10 @@ export default function AgentsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>名称</label>
+                  <label>{t("agent.formName")}</label>
                   <input
                     className="input"
-                    placeholder="发布机器人"
+                    placeholder={t("agent.namePlaceholder")}
                     value={form.name}
                     onChange={(event) => setForm({ ...form, name: event.target.value })}
                   />
@@ -309,7 +295,7 @@ export default function AgentsPage() {
               </div>
               <div className="grid grid-2" style={{ gap: 10 }}>
                 <div className="field">
-                  <label>模型</label>
+                  <label>{t("agent.formModel")}</label>
                   <input
                     className="input mono"
                     placeholder="workbuddy-flash"
@@ -318,31 +304,70 @@ export default function AgentsPage() {
                   />
                 </div>
                 <div className="field">
-                  <label>权限范围</label>
+                  <label>{t("agent.formScope")}</label>
                   <select
                     className="select"
                     value={form.scope}
                     onChange={(event) => setForm({ ...form, scope: event.target.value })}
                   >
-                    <option value="readonly">readonly（只读巡检）</option>
-                    <option value="project">project（可改项目）</option>
-                    <option value="full">full（可创建 / 删除）</option>
+                    <option value="readonly">{t("agent.scopeReadonly")}</option>
+                    <option value="project">{t("agent.scopeProject")}</option>
+                    <option value="full">{t("agent.scopeFull")}</option>
                   </select>
                 </div>
               </div>
             </div>
             <div className="modal-foot">
               <button className="btn" onClick={() => setCreating(false)}>
-                取消
+                {t("common.cancel")}
               </button>
-              <button className="btn btn-accent" onClick={createAgent} disabled={!form.key || !form.name}>
-                创建
+              <button
+                className="btn btn-accent"
+                onClick={createAgent}
+                disabled={!form.key || !form.name}
+              >
+                {t("common.create")}
               </button>
             </div>
           </div>
         </div>
       ) : null}
     </main>
+  );
+}
+
+function Binding({
+  label,
+  icon,
+  items,
+}: {
+  label: string;
+  icon: "plug" | "puzzle";
+  items?: string[];
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      <span
+        className="muted"
+        style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase" }}
+      >
+        {label}
+      </span>
+      <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
+        {items?.length ? (
+          items.map((name) => (
+            <span className="tag" key={name}>
+              <Icon name={icon} size={10} /> {name}
+            </span>
+          ))
+        ) : (
+          <span className="muted" style={{ fontSize: 11.5 }}>
+            {t("common.unbound")}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
