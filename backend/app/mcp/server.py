@@ -25,10 +25,13 @@ from app.services.system_tools import TOOLS, describe_workbench
 mcp = FastMCP(
     name="ai-workbench",
     instructions=(
-        "AI Workbench control plane. Use list_templates before create_project, "
-        "create_project provisions storage + database + a <slug>.<suffix> domain, "
-        "deploy_project then deployment_status to verify, and write_project_file / "
-        "set_env_var to modify a running application."
+        "AI Workbench control plane. Read check_project_conventions first — it returns the "
+        "type spec (layout, dev/build/run commands, health path) plus a pass/warn/fail report. "
+        "create_project provisions storage + database + <slug>.<suffix> and a debug domain "
+        "<slug>-dev.<suffix>. Edit with write_project_file / search_project, verify with "
+        "start_preview + preview_status (log_tail), then publish_project, which commits, tags "
+        "deploy/v<N> and deploys that exact commit. Use git_status / git_diff / git_log before "
+        "touching files you did not write, and git_revert_commit to roll back."
     ),
 )
 
@@ -51,8 +54,9 @@ def _extra_tools() -> None:
         report["object_model"] = [
             "project",
             "resource(storage|database)",
-            "domain",
-            "deployment",
+            "domain(production|preview)",
+            "deployment(preview|production)",
+            "commit/tag",
             "agent",
         ]
         report["tools"] = sorted([*TOOLS, "run_workbench_agent", "workbench_capabilities"])

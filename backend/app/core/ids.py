@@ -43,6 +43,17 @@ def port_available(port: int, host: str = "127.0.0.1") -> bool:
     return True
 
 
+def port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.25) -> bool:
+    """True when something is *listening* on ``port``.
+
+    The counterpart to :func:`port_available`: one asks "may I bind here", the other
+    "is anything answering". Used to tell a live preview from a stale ``running`` row
+    after the control plane restarted and took its child processes with it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        return sock.connect_ex((host, port)) == 0
+
+
 def allocate_port(taken: set[int]) -> int:
     for port in range(settings.port_range_start, settings.port_range_end + 1):
         if port in taken or not port_available(port):

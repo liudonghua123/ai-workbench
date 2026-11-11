@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # localtest.me / nip.io / sslip.io all resolve *.wildcard -> 127.0.0.1
     domain_suffix: str = "localtest.me"
     domain_base_url: str = ""  # e.g. https://gateway.example.com; empty -> http://<fqdn>:<port>
+    # debug/preview traffic goes to <slug><preview_suffix>.<domain_suffix>
+    preview_suffix: str = "-dev"
     port_range_start: int = 4200
     port_range_end: int = 4399
 
@@ -48,6 +50,13 @@ class Settings(BaseSettings):
     # "simulate" writes a realistic build/deploy log without spawning processes
     # "process"  actually runs the project's run command on a local port
     deploy_mode: str = "simulate"
+
+    # How a preview (debug) environment is served:
+    # "auto"    -> process when WB_DEPLOY_MODE=process, otherwise the static host
+    # "process" -> always try the real dev server first
+    # "static"  -> always serve the built output (or the explainer page)
+    preview_mode: str = "auto"
+    preview_timeout: float = 25.0
 
     # code-server / openvscode-server entry, e.g. "http://localhost:8443/?folder={path}"
     ide_url_template: str = ""

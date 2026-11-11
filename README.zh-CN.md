@@ -22,14 +22,17 @@ AI 工作台就是这套接口。你可视化创建项目，平台按约定自�
 | --- | --- |
 | **可视化创建** | 选模板 → 自动装配对象存储、数据库、`<slug>.<后缀>` 域名 |
 | **四套模板、四种形态** | 全栈（FastAPI + Next.js）、纯前端（Vite + React）、纯后端（FastAPI + MCP）、Agent 服务（FastAPI + MCP + Harness） |
-| **在线编辑** | 内置文件编辑器开箱可用；配置 `WB_IDE_URL_TEMPLATE` 后自动切换为 iframe 内嵌的 Web 版 VS Code |
+| **项目内可视化改代码** | 文件树 + 语法高亮编辑器，零额外依赖；写盘走的就是 Agent 用的 `write_project_file` |
+| **真正的调试环境** | 每个项目独占 `<slug>-dev.<后缀>`：自己的端口、自己的进程、热更新；面板内直接内嵌运行结果 |
+| **界面里的版本控制** | 暂存、看 diff、提交、还原单文件、回滚提交 —— git 是事实来源，不是附加功能 |
+| **发布 = 提交 → 打标签 → 部署** | 发布时打 `deploy/v<N>` 标签并部署那个 sha，「线上是哪一版」是可指向的 git 对象 |
 | **一键部署** | 带版本号、流式构建日志与健康检查 |
 | **资源实操** | 直接对项目自己的数据库跑 SQL；浏览对象存储里的 key |
 | **MCP / Skills / Agents** | 三者都是一等公民，以数据形式存储、可视化增删改 |
 | **真 Agent，也可离线** | 规划器可插拔：配一个 OpenAI 兼容端点，Agent 就真的在工具调用上推理；没有 Key 时自动退回规则规划器 |
 | **有护栏的数据库控制台** | 默认只读：语句白名单 + `ATTACH` / `load_extension` / `writable_schema` 黑名单 |
 | **可选令牌鉴权** | `viewer` / `editor` / `admin` 三种角色，一个中间件同时管 REST 与 `/mcp`；本地默认关闭 |
-| **约定大于配置** | 工作区路径、桶名、库名、主域名、端口全部由 slug 推导 |
+| **约定大于配置** | 三类项目规范文档（全栈 / 纯前端 / 纯后端）同时驱动脚手架、合规报告、预览命令与 Agent 提示词，只有一份定义 |
 | **云可替换** | 存储 / 数据库 / DNS / 部署统一在 Provider SPI 之后，换云只改一个环境变量 |
 | **双语 · 主题 · 可换导航** | 中英文（默认英文）、跟随系统/浅色/深色主题、导航可在侧边栏或顶栏之间切换 |
 
@@ -37,7 +40,7 @@ AI 工作台就是这套接口。你可视化创建项目，平台按约定自�
 
 ## 快速开始
 
-需要 Python ≥ 3.11、[uv](https://docs.astral.sh/uv/)、Node.js ≥ 20。
+需要 Python ≥ 3.11、[uv](https://docs.astral.sh/uv/)、Node.js ≥ 20，以及 `PATH` 里的 git（发布与版本控制直接调它）。
 
 ```bash
 git clone <your-repo> ai-workbench && cd ai-workbench
@@ -69,63 +72,113 @@ npm run dev
 
 ![创建应用](docs/screenshots/03-create.png)
 
-### 一个项目，五个标签页
+### 一个项目，八个标签页
 
 | 标签 | 内容 |
 | --- | --- |
 | 概览 | 运行时、已装配云资源、域名绑定、环境变量、最近部署 |
-| 代码 / IDE | 文件树 + 编辑器；配了 `WB_IDE_URL_TEMPLATE` 则为内嵌 VS Code |
+| 代码 | 文件树 + 编辑器；可新建、保存、删除、还原单个文件 |
+| 调试 | `<slug>-dev.<后缀>` 上的实时预览，启动 / 停止 / 重启，流式日志，发布 |
+| 版本 | 工作区状态、diff、提交历史、提交、回滚 |
 | 部署 | 部署历史、实时构建日志、停止 / 重新部署 |
 | 数据 | 项目数据库的 SQL 控制台、对象存储浏览器 |
+| 规范 | 类型规范、通过/告警/失败报告、解析后的命令、覆盖文件 |
 | 设置 | 环境变量、自定义域名、删除项目 |
 
 ![项目概览](docs/screenshots/04-project-overview.png)
 
 ### 改代码
 
-没有外部 IDE 时，内置编辑器直接读写工作区 —— 它调用的 `write_project_file` 和 Agent 调的是同一个函数。
+编辑器是一个透明 `<textarea>` 叠在与它字体度量完全一致的已高亮 `<pre>` 上 ——
+不用 Monaco、不用 CodeMirror、不加任何依赖。高亮是按语言的粘性正则分词，与行号槽
+滚动同步；`Ctrl/⌘+S` 保存，`Tab` / `Shift+Tab` 缩进，`Enter` 自动缩进。
 
-![在线编辑](docs/screenshots/05-project-ide.png)
+它写盘调用的就是 Agent 调用的 `write_project_file`，不存在只有界面能走的特权路径。
+
+![代码标签页](docs/screenshots/05-project-code.png)
+
+### 调试：`<slug>-dev`
+
+调试环境不是部署的一个模式，而是一套独立环境：独立端口、独立进程、独立域名，
+所以重启预览永远压不到生产。
+
+```
+生产  http://customer-success.localtest.me:4200
+预览  http://customer-success-dev.localtest.me:4204   ← WB_PREVIEW_SUFFIX=-dev
+```
+
+它只朝一个方向降级，而且会明确告诉你降到了哪一级：
+
+1. **dev server** —— 真的跑解析出的 `dev_command`（带热更新）。
+2. **静态宿主** —— 还没装 `node_modules`/`.venv`，那就按 `dist/` → `build/` →
+   `out/` → 已编译 `index.html` 的顺序托管。
+3. **说明页** —— 连能托管的东西都没有，就渲染文件树、README 和需要执行的确切命令，
+   而不是丢给你一个死端口。
+
+实际用到的模式会记在部署行上并显示为标签（上图是 `static:explainer`），
+所以截图不会说谎。
+
+![调试标签页](docs/screenshots/06-project-preview.png)
+
+### 版本控制与发布
+
+git 不是外挂：工作区从创建起就是一个仓库，每次发布都是
+`提交 → 打 deploy/v<N> 标签 → 部署那个 commit_sha`，并把 sha 记在部署行上。
+所以回滚就是一次普通 revert，而不是去猜「哪个目录才是线上」。
+
+![版本标签页](docs/screenshots/07-project-version.png)
+
+### 规范是被检查的
+
+类型规范是可执行的数据，不是文档里的句子。每个项目类型一个 `TypeSpec`，
+同时驱动模板渲染、合规报告、预览命令和 Agent 系统提示词 ——
+所以文档、界面和 Agent 不可能各自漂移。
+
+![规范标签页](docs/screenshots/08-project-conventions.png)
+
+完整规范：**[docs/conventions/](docs/conventions/README.md)** ——
+[全栈](docs/conventions/fullstack.md) ·
+[纯前端](docs/conventions/frontend.md) ·
+[纯后端](docs/conventions/backend.md)。
 
 ### 部署
 
 部署是异步的：请求立即返回，日志随构建进程增量推送，健康检查决定 `运行中` 还是 `失败`。浏览器通过 **SSE**（`/deployments/{id}/stream`）收日志，没有轮询间隔要调；同一项目已有部署在跑时，再次触发会被 `409` 拒绝。
 
-![部署](docs/screenshots/06-project-deploy.png)
+![部署](docs/screenshots/09-project-deploy.png)
 
-![实时部署日志](docs/screenshots/21-deploy-live.png)
+![实时部署日志](docs/screenshots/17-deploy-live.png)
 
 数据标签页通过和真实云同一套 Provider 接口访问项目自己的库。控制台**默认只读**：`DROP`、`ATTACH`、`PRAGMA writable_schema` 在执行前就被拦下。
 
-![数据](docs/screenshots/07-project-data.png)
+![数据](docs/screenshots/10-project-data.png)
 
 ### 管理能力层
 
 MCP 服务、Skills、Agents 都是数据行，用 id 相互关联 —— 所以随时能在界面上重组某个 Agent 的能力，不用改代码。
 
-![MCP 管理](docs/screenshots/10-mcp.png)
+![MCP 管理](docs/screenshots/13-mcp.png)
 
-![Agents](docs/screenshots/09-agents.png)
+![Agents](docs/screenshots/12-agents.png)
 
 每次变更都会写入全局事件流，工作台顶部的计数就是从这里来的。
 
-![事件流](docs/screenshots/12-events.png)
+![事件流](docs/screenshots/15-events.png)
 
 ### 偏好设置
 
 一个弹层同时管语言、主题、导航位置。三项都持久化到 localStorage，并在 hydration
 之前应用，所以不会出现"先闪一下错误主题"。
 
-![偏好设置](docs/screenshots/13-preferences.png)
+![偏好设置](docs/screenshots/18-preferences.png)
 
 选「顶栏」会把导航整体搬到 header 里，释放侧边栏宽度给内容——宽屏上更划算。
 
-![顶栏导航](docs/screenshots/15-nav-top.png)
+![顶栏导航](docs/screenshots/20-nav-top.png)
 
 同一套界面切到英文：
 
 ![英文界面](docs/screenshots/01-dashboard.png)
-
 ---
 
 ## 国际化
@@ -156,23 +209,56 @@ relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
 | --- | --- |
 | `describe_workbench` | 约定、Provider、模板、规划器与工具清单 —— 建议第一把就调它 |
 | `list_templates` | 可用模板及各自需要的资源 |
-| `create_project` | 生成骨架并装配存储、数据库、域名 |
+| `create_project` | 生成骨架并装配存储、数据库、域名（生产与预览各一套） |
 | `list_projects` / `get_project` | 查状态、资源、域名、最近部署 |
 | `list_project_files` / `read_project_file` / `write_project_file` / `delete_project_file` | 读写、删除应用代码 |
+| `search_project` | 整个工作区搜索字符串，返回路径、行号与该行内容 |
+| `check_project_conventions` | 按类型规范给工作区打分 —— 改代码和发布前先跑它 |
+| `start_preview` / `stop_preview` / `preview_status` | 驱动 `<slug>-dev` 调试环境 |
+| `run_project` | 用当前工作区跑生产命令 |
+| `publish_project` | 提交 → 打 `deploy/v<N>` 标签 → 部署那个提交 |
+| `deploy_project` / `deployment_status` | 触发普通部署并轮询 |
+| `git_status` / `git_log` / `git_diff` | 查工作区状态、历史与 diff |
+| `git_commit` / `git_restore_file` / `git_revert_commit` | 提交、丢弃单文件改动、用 revert 回滚 |
 | `list_env_vars` / `set_env_var` | 查看与修改环境变量，下次部署注入 |
 | `query_database` | 对项目数据库执行受护栏约束的只读查询 |
 | `add_domain` | 给项目再绑一个域名 |
-| `deploy_project` / `deployment_status` | 触发构建并轮询结果 |
-| `list_agents` / `run_workbench_agent` | 把高层目标交给配置好的 Agent |
-| `workbench_capabilities` | 返回对象模型与全部约定，让外部 Agent 能安全规划 |
+| `list_agents` | 查看已配置 Agent 及其 MCP 服务与 Skills |
 
-典型 Agent 闭环：
+典型 Agent 闭环 —— 和人点的是同样五个动作：
 
 ```
-describe_workbench → list_templates → create_project → write_project_file → deploy_project → deployment_status
+describe_workbench → check_project_conventions → write_project_file
+                   → start_preview → publish_project
 ```
 
-REST 侧等价物：`/api/v1` 下 40 个端点，<http://localhost:8000/docs> 可直接浏览。
+REST 侧等价物：`/api/v1` 下 55 个端点，<http://localhost:8000/docs> 可直接浏览。
+
+---
+
+## 三类项目规范
+
+`backend/app/services/conventions.py` 里每个项目类型一个 `TypeSpec`。
+它是唯一知道「全栈项目意味着什么」的地方，其余全部读它。
+
+| 类型 | 目录布局 | 调试命令 | 健康检查 |
+| --- | --- | --- | --- |
+| `fullstack` | `backend/` + `frontend/` | `npm --prefix frontend run dev -- --port {dev_port}` | `/health` |
+| `frontend` | 单个 Vite 应用 | `npm run dev -- --port {dev_port}` | `/` |
+| `backend` | 仅 FastAPI | `python -m uvicorn app.main:app --host 0.0.0.0 --port {port} --reload` | `/health` |
+
+同一定义在五个地方生效：脚手架、**规范**标签页（`GET /projects/{id}/conventions`）、
+`check_project_conventions` 工具、预览命令解析、发布闸门。
+
+工作区确实需要不一样时，只有一个官方认可的覆盖文件，放在项目根：
+
+```yaml
+# workbench.yaml
+type: fullstack
+dev_command: npm --prefix frontend run dev -- --port {port}
+health_path: /healthz
+preview_suffix: -sigma
+```
 
 ---
 
@@ -203,7 +289,7 @@ WB_LLM_BASE_URL=http://127.0.0.1:8811/v1 WB_LLM_API_KEY=test uv run uvicorn app.
 
 系统设置页的「测试连通性」会真发一次请求并回显模型答复。
 
-![Agent 运行时](docs/screenshots/22-settings-zh.png)
+![Agent 运行时](docs/screenshots/25-settings-zh.png)
 
 ---
 
@@ -224,7 +310,7 @@ WB_AUTH_TOKENS="tok_admin:alice:admin,tok_read:bob:viewer"
 
 项目带 `owner_id`，非 admin 只看得到自己的。浏览器把令牌存在 `localStorage`，以 Bearer 头发送；任何 `401` 只会弹一次解锁框，而不是让每个页面各自烂掉。
 
-![令牌解锁](docs/screenshots/23-token-gate.png)
+![令牌解锁](docs/screenshots/26-token-gate.png)
 
 ---
 
@@ -238,8 +324,12 @@ WB_AUTH_TOKENS="tok_admin:alice:admin,tok_read:bob:viewer"
 | 对象存储桶 | `<slug>-assets` |
 | 数据库 | `<slug>` |
 | 主域名 | `<slug>.<WB_DOMAIN_SUFFIX>` |
-| 本地端口 | `4200–4399` 内首个空闲 |
-| 启动命令 | 取自模板，可按项目覆盖 |
+| 预览域名 | `<slug><WB_PREVIEW_SUFFIX>.<WB_DOMAIN_SUFFIX>`，默认后缀 `-dev` |
+| 端口 | 两个，`4200–4399` 内前两个空闲（生产 + 预览） |
+| 命令 | 取自类型规范，可在 `workbench.yaml` 覆盖 |
+| 发布 | 在部署的提交上打 `git tag deploy/v<N>` |
+
+完整设计说明与逐类型细节：[docs/conventions/](docs/conventions/README.md)。
 
 ---
 
@@ -250,6 +340,7 @@ WB_AUTH_TOKENS="tok_admin:alice:admin,tok_read:bob:viewer"
 | 换云（COS / S3 / PostgreSQL / DNSPod / Docker） | 加一个 provider 模块，设 `WB_*_PROVIDER` | 否 |
 | 加模板 | `backend/app/services/templates.py` 加一个 dataclass | 否 |
 | 加 Agent 可用能力 | 加一个函数并注册进 `TOOLS`，REST / MCP / Agent 同时获得 | 否 |
+| 加一类项目 | `conventions.py` 加一个 `TypeSpec`，`templates.py` 加对应模板 | 否 |
 | 换 Agent 框架（agentscope、langgraph） | 继承 `Harness` 并 `register_harness` | 否 |
 | 换模型供应商 | 设 `WB_LLM_BASE_URL` / `WB_LLM_MODEL` | 否 |
 | 放开 SQL 控制台 | `WB_SQL_MODE=write` | 否 |
@@ -278,9 +369,12 @@ class S3Storage(StorageProvider):
 
 ```bash
 WB_DOMAIN_SUFFIX=localtest.me    # *.localtest.me -> 127.0.0.1
+WB_PREVIEW_SUFFIX=-dev           # -> <slug>-dev.localtest.me
+WB_PREVIEW_MODE=auto             # auto | process | static
+WB_PREVIEW_TIMEOUT=25            # 等待 dev server 的秒数，超时回退静态宿主
 WB_DEPLOY_MODE=simulate          # simulate | process
 WB_STORAGE_PROVIDER=local        # 可换成 s3 / cos / oss ...
-WB_IDE_URL_TEMPLATE=             # code-server 入口，支持 {path} {project}
+WB_IDE_URL_TEMPLATE=             # 可选 code-server 入口，支持 {path} {project}
 WB_DATA_DIR=./data               # 项目、桶、数据库、DNS 区
 
 WB_AGENT_HARNESS=auto            # auto | local | llm
@@ -293,7 +387,7 @@ WB_AUTH_ENABLED=false            # true -> 必须带 Bearer 令牌
 WB_AUTH_TOKENS=                  # "令牌:名字:admin,令牌2:bob:viewer"
 ```
 
-`WB_DEPLOY_MODE=process` 会真的在分配端口上起子进程；`simulate`（默认）只产出贴近真实的构建日志，不启动任何东西。
+`WB_DEPLOY_MODE=process` 会真的在分配端口上起子进程；`simulate`（默认）只产出贴近真实的构建日志，不启动任何东西。预览跟随 `WB_DEPLOY_MODE`，除非 `WB_PREVIEW_MODE` 另有指定 —— 而且它总会回退到静态宿主，不会把一个死端口丢进 iframe。
 
 表结构变更在启动时按前向兼容方式自动应用（`app/core/migrate.py`）：只加列、只建幂等索引，没有需要记住的迁移步骤。
 
@@ -304,20 +398,21 @@ WB_AUTH_TOKENS=                  # "令牌:名字:admin,令牌2:bob:viewer"
 ```
 backend/
   app/
-    api/           projects · platform · registry · system
+    api/           projects · workspace · platform · registry · system
     core/          config · db · security · migrate · errors · ids
-    services/      scaffold · templates · deployments · system_tools
-                   agent_runtime · llm · sql_guard
-    providers/     base（SPI + 注册表）+ local/{storage,database,domain,deploy}
+    services/      conventions · scaffold · templates · deployments · gitops
+                   system_tools · agent_runtime · llm · sql_guard
+    providers/     base（SPI + 注册表）+ local/{storage,database,domain,deploy,static_host}
     mcp/server.py  fastmcp 服务端，与 REST 同端口
     models.py      9 张表
   tools/mock_llm.py  离线验证 LLM 链路的假端点
 frontend/
-  app/             11 个路由，/projects/[id] 下五个标签页
+  app/             11 个路由，/projects/[id] 下八个标签页
   components/      Shell · Rail · Topbar · NavLinks · Preferences · TokenGate
-                   CreateProjectDialog · LogViewer · Icon（全 SVG）
+                   CreateProjectDialog · LogViewer · CodeEditor · Icon（全 SVG）
   lib/             api · auth · types · format · i18n · prefs · nav
 docs/architecture.md   设计取舍、数据模型、扩展点
+docs/conventions/      三类项目规范 + 「约定大于配置」的来龙去脉
 scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 ```
 
@@ -325,9 +420,9 @@ scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 
 ## 已知限制
 
-没有项目级 RBAC（角色是全局的）· SQL 护栏是首关键字白名单而非真正的解析器 · 部署串行化只在单进程内有效，多副本仍可能竞争 · MCP 鉴权依赖客户端主动带 header · Agent 写文件没有影子副本，`write_project_file` 前没有 dry-run。
+预览宿主跑在**控制面进程内**，所以重启后端会带走所有预览 —— 状态接口能发现端口已死并诚实报成 `stopped`，但不会自动拉起 · 内置编辑器没有多文件搜索替换 · 没有项目级 RBAC（角色是全局的）· SQL 护栏是首关键字白名单而非真正的解析器 · 部署串行化只在单进程内有效，多副本仍可能竞争 · MCP 鉴权依赖客户端主动带 header · Agent 写文件没有影子副本，`write_project_file` 前没有 dry-run。
 
-每一条的推荐解法见[架构文档 §13](docs/architecture.md#13-已知限制与下一步)。
+每一条的推荐解法见[架构文档 §14](docs/architecture.md#14-已知限制与下一步)。
 
 ---
 

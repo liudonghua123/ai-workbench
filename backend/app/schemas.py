@@ -33,6 +33,20 @@ class DeployRequest(BaseModel):
     environment: str = "production"
 
 
+class PublishRequest(BaseModel):
+    message: str = ""
+
+
+class GitCommitRequest(BaseModel):
+    message: str = ""
+    paths: list[str] = []
+
+
+class GitRefRequest(BaseModel):
+    path: str = ""
+    ref: str = "HEAD"
+
+
 class DomainCreate(BaseModel):
     subdomain: str
     suffix: str = ""

@@ -19,7 +19,12 @@ from app.models import (
 )
 
 
-def serialize_project(session: Session, project: Project) -> dict[str, Any]:
+def serialize_project(session: Session, project: Project, *, reconcile: bool = True) -> dict[str, Any]:
+    if reconcile:
+        # imported here to keep serializers free of a module-level cycle
+        from app.services.deployments import reconcile_preview
+
+        reconcile_preview(session, project)
     resources = session.exec(
         select(ProjectResource).where(ProjectResource.project_id == project.id)
     ).all()
@@ -30,6 +35,9 @@ def serialize_project(session: Session, project: Project) -> dict[str, Any]:
         .order_by(Deployment.started_at.desc())  # type: ignore[attr-defined]
     ).all()
     latest = deployments[0] if deployments else None
+    preview_runs = [d for d in deployments if d.environment == "preview"]
+    preview = preview_runs[0] if preview_runs else None
+    production_runs = [d for d in deployments if d.environment == "production"]
     return {
         "id": project.id,
         "slug": project.slug,
@@ -41,9 +49,22 @@ def serialize_project(session: Session, project: Project) -> dict[str, Any]:
         "template_version": project.template_version,
         "repo_path": project.repo_path,
         "runtime": project.runtime,
+        "build_command": project.build_command,
         "run_command": project.run_command,
+        "dev_command": project.dev_command,
+        "dev_port": project.dev_port,
+        "health_path": project.health_path,
         "port": project.port,
         "url": project.primary_url,
+        "preview": {
+            "fqdn": project.preview_fqdn,
+            "url": project.preview_url,
+            "port": project.dev_port,
+            "command": project.dev_command,
+            "status": preview.status if preview else "stopped",
+            "deployment": serialize_deployment(preview) if preview else None,
+            "last_deployed": serialize_deployment(production_runs[0]) if production_runs else None,
+        },
         "git_initialized": project.git_initialized,
         "owner_id": project.owner_id or "",
         "created_at": project.created_at.isoformat() if project.created_at else None,
@@ -66,7 +87,6 @@ def serialize_project(session: Session, project: Project) -> dict[str, Any]:
         "deployment_count": len(deployments),
     }
 
-
 def serialize_domain(domain: DomainBinding) -> dict[str, Any]:
     return {
         "id": domain.id,
@@ -88,6 +108,8 @@ def serialize_deployment(deployment: Deployment, *, include_log: bool = False) -
         "environment": deployment.environment,
         "status": deployment.status,
         "version": deployment.version,
+        "commit_sha": deployment.commit_sha,
+        "image": deployment.image,
         "url": deployment.url,
         "provider": deployment.provider,
         "error": deployment.error,

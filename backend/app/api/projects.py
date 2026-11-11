@@ -119,6 +119,15 @@ def write_project_file(project_id: str, payload: FileWrite, session: Session = D
     return scaffold.write_file(project, payload.path, payload.content)
 
 
+@router.delete("/{project_id}/file", status_code=204)
+def delete_project_file(project_id: str, path: str, session: Session = Depends(get_session)):
+    project = scaffold.get_project(session, project_id)
+    scaffold.delete_file(project, path)
+    scaffold.log_event(
+        session, "project.file_deleted", f"删除 {path}", project_id=project.id, path=path
+    )
+
+
 # --- env -------------------------------------------------------------------
 
 

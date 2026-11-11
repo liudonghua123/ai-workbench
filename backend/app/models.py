@@ -80,8 +80,17 @@ class Project(_Base, table=True):
     status: str = Field(default=ProjectStatus.CREATING, index=True)
     repo_path: str = ""
     runtime: str = ""  # python | node | static
+    # production: build_command (optional) -> run_command on <slug>.<suffix>
+    build_command: str = ""
     run_command: str = ""
     port: int | None = None
+    # preview/debug: dev_command on <slug>-dev.<suffix>, always a second port so a
+    # running preview never fights the production process for a socket.
+    dev_command: str = ""
+    dev_port: int | None = None
+    preview_fqdn: str = ""
+    preview_url: str = ""
+    health_path: str = "/"
     primary_url: str = ""
     git_initialized: bool = False
     # principal name that created the project; empty when auth is disabled
@@ -139,6 +148,9 @@ class Deployment(_Base, table=True):
     environment: str = "production"
     status: str = Field(default=DeploymentStatus.QUEUED, index=True)
     version: str = ""
+    # git commit this deployment was built from — the link between "what runs" and
+    # "what is in the repository", so a rollback is a commit sha and not a guess.
+    commit_sha: str = ""
     image: str = ""
     url: str = ""
     provider: str = "local"

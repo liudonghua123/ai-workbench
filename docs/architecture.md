@@ -11,7 +11,7 @@
 | 目标 | 落地方式 | 代价 |
 | --- | --- | --- |
 | 可视化创建项目 | 模板目录 + 创建向导（`CreateProjectDialog`） | 模板需声明完整契约 |
-| 约定大于配置 | 目录布局、桶名、域名、端口、环境变量全部由 slug 推导 | 需要显式"逃生舱"覆盖默认值 |
+| 约定大于配置 | 目录布局、桶名、域名、端口、环境变量全部由 slug 推导；类型规范写成 `TypeSpec` 数据 | 需要显式"逃生舱"覆盖默认值（`workbench.yaml`） |
 | 系统可扩展 | 四个维度扩展点：Provider / Template / Tool / Agent | 每个扩展点要有稳定契约 |
 | 一套 API 供人机共用 | REST 与 MCP 共用同一批 `system_tools` 函数 | 工具函数签名需同时满足两者 |
 | 分层可替换 | 控制面绝不直接调用云 SDK | 每个云能力要写适配器 |
@@ -37,8 +37,10 @@
 ├─────────────────────────────────────────────────────────────────────┤
 │  服务层 app/services/*        （厚：全部业务逻辑在这里）              │
 │  scaffold      项目生命周期 + 文件树 + 装配                         │
+│  conventions   三类项目规范，可执行的约定（见 §9.1）                 │
 │  templates     模板目录与渲染                                       │
-│  deployments   部署编排 + 日志流 + 状态机                            │
+│  gitops        唯一的 git 接缝：status/log/diff/commit/tag          │
+│  deployments   预览/运行/发布三动词 + 日志流 + 状态机                │
 │  system_tools  人机共用的操作面（REST 与 MCP 的唯一实现）            │
 │  agent_runtime 意图解析 → 工具编排 → 步骤记录                        │
 │  serializers   ORM → API 契约                                       │
@@ -46,6 +48,7 @@
 │  Provider SPI  app/providers/base.py  （四类能力的抽象接口）          │
 │  storage  database  domain  deploy                                  │
 │  ↳ 实现：providers/local/{storage,database,domain,deploy}.py        │
+│  ↳ 预览宿主：providers/local/static_host.py（无依赖也能托管）        │
 ├─────────────────────────────────────────────────────────────────────┤
 │  持久化 app/models.py（SQLModel）+ app/core/db.py                   │
 │  projects / resources / domains / env_vars / deployments            │
@@ -192,9 +195,15 @@ def storage_provider() -> StorageProvider:
 | 对象存储桶 | `<slug>-assets` | 模板 `files` 里显式指定 |
 | 数据库名 | `<slug>` | 同上 |
 | 主域名 | `<slug>.<WB_DOMAIN_SUFFIX>` | 请求体 `slug` / 后续 `POST /domains` |
-| 本地端口 | `WB_PORT_RANGE_START..END` 首个空闲 | — |
-| 启动命令 | 模板 `run_command` | 项目 `meta.run_command` |
+| 预览域名 | `<slug><WB_PREVIEW_SUFFIX>.<WB_DOMAIN_SUFFIX>` | 项目 `workbench.yaml` 的 `preview_suffix` |
+| 端口 | `WB_PORT_RANGE_START..END` 内两个空闲 | — |
+| 调试/运行/构建命令 | 类型规范的 `commands` | 项目 `workbench.yaml` |
+| 健康检查路径 | 类型规范的 `health_path` | 同上 |
 | 环境变量注入 | 部署时读 `EnvVar` → 进程环境 | `scope` 字段区分环境 |
+| 发布版本 | `git tag deploy/v<N>` | — |
+
+这套约定在本轮被收敛成可执行数据（`TypeSpec`），完整表与逐类型细节见
+**[docs/conventions/](conventions/README.md)**；实现与取舍见 §9.1。
 
 ---
 
@@ -224,15 +233,22 @@ def set_env_var(project_id: str, key: str, value: str, is_secret: bool = False) 
 益处：Agent 能做的事与人能做的事**永远等价**，不存在"UI 有但 MCP 没有"的能力缺口；
 工具行为的测试一次覆盖三条链路。
 
-### 工具清单（16 个）
+### 工具清单（29 个）
 
-`describe_workbench` `list_templates` `list_projects` `get_project` `create_project`
-`deploy_project` `deployment_status` `list_project_files` `read_project_file`
-`write_project_file` `delete_project_file` `list_env_vars` `set_env_var`
-`query_database` `add_domain` `list_agents`
+按用途分五组，同一份 `TOOLS` 字典同时喂给 REST、MCP 与 Agent：
+
+| 组 | 工具 |
+| --- | --- |
+| 元信息 | `describe_workbench` `list_templates` `list_agents` |
+| 项目 | `list_projects` `get_project` `create_project` `add_domain` |
+| 代码 | `list_project_files` `read_project_file` `write_project_file` `delete_project_file` `search_project` `check_project_conventions` |
+| 运行 | `run_project` `deploy_project` `deployment_status` `start_preview` `stop_preview` `preview_status` `publish_project` |
+| 版本 | `git_status` `git_log` `git_diff` `git_commit` `git_restore_file` `git_revert_commit` |
+| 资源 | `list_env_vars` `set_env_var` `query_database` |
 
 `describe_workbench` 是给模型用的"说明书"：约定、Provider、模板、规划器、工具清单
-一次给全，省掉三轮试探。
+一次给全，省掉三轮试探。`start_preview` / `publish_project` 这类动词之所以也在
+`TOOLS` 里，是因为"改完自己看一眼再发布"是 Agent 闭环的必要一步，不能只留在界面上。
 
 ### MCP 服务端
 
@@ -338,7 +354,119 @@ Agent 通过 `mcp_server_ids` / `skill_ids` 组合能力，是纯粹的数据关
 
 ---
 
-## 9. 部署流水线
+## 9. 工作区：编辑 · 调试 · 版本 · 发布
+
+前八节解决"怎么把项目造出来、怎么供应资源"。这一节解决另一半：**造出来之后怎么改**。
+四个动作（改代码、调试、版本、发布）在无人值守的场景里必须能被 Agent 独立完成，
+所以它们全部落在 `system_tools` 上，界面只是其中一个调用者。
+
+```
+        ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+        │  界面（人）  │  │  MCP（外部） │  │ Agent（内建）│
+        └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+               └─────────────────┴─────────────────┘
+                                 ▼
+                       system_tools（29 个工具）
+        /            │            │            │            \
+   write_project   start_       publish_     git_*       check_project
+     _file        preview       project                  _conventions
+        │            │            │            │            │
+        ▼            ▼            ▼            ▼            ▼
+   scaffold     deployments   deployments   gitops     conventions
+        └────────────┴────────────┴────────────┴────────────┘
+                                 ▼
+                    data/projects/<slug>（一个 git 仓库）
+```
+
+### 9.1 约定即数据：`conventions.py`
+
+这是本轮的核心判断：**"约定大于配置"如果不写成可执行的数据，就只是一句口号**。
+所以每个项目类型对应一个 `TypeSpec`：
+
+```python
+TypeSpec(type="fullstack", layout=[...], commands={"dev": "...{port}", "run": "..."},
+         health_path="/health", resources=["storage", "database"], conventions=[...])
+```
+
+一份定义同时被五处消费：
+
+| 消费者 | 用法 |
+| --- | --- |
+| `scaffold.create_project` | 决定模板渲染上下文、分配端口数量、绑定几个域名 |
+| `GET /projects/{id}/conventions` | 生成"通过/告警/失败"报告（`Check(key,title,status,detail)`） |
+| 规范标签页 | 直接渲染同一份报告，不重复实现判定 |
+| `check_project_conventions` | Agent 在改码前先自检 |
+| `resolve(project)` | 解析出真正要执行的 `dev/build/run` 命令与 `health_path` |
+
+覆盖只有一个入口：项目根的 `workbench.yaml`。`load_manifest()` 读它，
+`Resolved.overrides` 记录哪些字段被覆盖过，报告里会标出来 —— 逃生舱要有痕迹。
+
+**为什么不用配置文件而是推导**：配置会腐烂（改了目录忘了改配置），而 slug 不会。
+代价是"想不一样"时必须走唯一那个覆盖文件，这反而是好事：差异集中且可见。
+
+### 9.2 调试环境：`<slug>-dev` 是第一等公民
+
+调试不是一个模式开关，而是一整套平行环境：
+
+| | 生产 | 预览 |
+| --- | --- | --- |
+| 域名 | `<slug>.<suffix>` | `<slug><WB_PREVIEW_SUFFIX>.<suffix>` |
+| 端口 | `project.port` | `project.dev_port`（创建时就分配好） |
+| 命令 | `run_command` | `dev_command`（带热更新） |
+| 部署锁 | `project:production` | `project:preview` |
+| Env | `PORT` / `PUBLIC_URL` | 额外 `WB_PREVIEW=1`、`PREVIEW_URL` |
+
+两条环境各自持有端口、进程与锁，所以重启预览永远压不到生产 —— 反之亦然。
+
+**降级只朝一个方向，且必须自报家门**：
+
+```
+1. dev server       依赖齐备 → 真跑 dev_command，端口探活成功才算 running
+2. static host      没有 node_modules/.venv → 按 dist/ → build/ → out/ → index.html
+3. explainer page   什么都托管不了 → 渲染文件树 + README + 该跑的命令
+```
+
+实际用了哪一级记在 `Deployment.image`（`process` / `static:dist` / `static:explainer`），
+界面显示为标签。**宁可承认"这是说明页"，也不能把死端口塞进 iframe** ——
+这正是本轮修掉的一个真问题。
+
+### 9.3 版本控制：git 是事实来源
+
+`gitops.py` 是进程里唯一碰 git 的地方（全部命令带 `-c user.name=...` 以免依赖全局配置）。
+它提供 `status / log / diff / commit_diff / commit / restore / revert / tag`，
+读操作容忍空仓库，写操作在"没东西可提交"时返回 `{"committed": false}` 而不是抛错 ——
+没变化是正常结果，不是异常。
+
+界面里刻意暴露的是**读**（status/log/diff/show）与**三个安全写**（commit / restore 单文件 /
+revert 提交），没有 `reset --hard`、没有 `push --force`：历史只追加。
+
+### 9.4 发布 = 提交 → 打标签 → 部署那个提交
+
+```
+publish(project)
+  ├─ gitops.commit()                     工作区落一个提交（无变化则复用 HEAD）
+  ├─ version = v<n>                      按 environment 计数
+  ├─ git tag deploy/v<n> HEAD
+  ├─ Deployment(commit_sha=HEAD)         把"跑的是哪一版"写进部署行
+  └─ run_deployment()
+```
+
+`Deployment.commit_sha` 是"线上跑的东西"与"仓库里的东西"之间的唯一连接。
+没有它，"回滚"只能靠猜；有了它，回滚就是 `git_revert_commit` + 再发布一次，
+而 `deploy/v<n>` 标签是可指向、可 diff 的锚点。
+
+### 9.5 编辑器：零依赖的语法高亮
+
+不做 Monaco 集成（体积与依赖都不划算），而是透明 `<textarea>` 叠在与它**字体度量完全一致**
+的已高亮 `<pre>` 上：输入交给 textarea，显示交给 pre，滚动同步到行号槽。
+高亮器是按语言的粘性正则分词（`js/py/json/css/html/md/sh`），超过 16 万字符自动降级为纯文本。
+快捷键：`Ctrl/⌘+S` 保存、`Tab`/`Shift+Tab` 缩进、`Enter` 自动缩进。
+
+关键约束：它写盘调用的就是 `write_project_file`，**不存在只有界面能走的特权路径**。
+
+---
+
+## 10. 部署流水线
 
 ```
 POST /projects/{id}/deployments
@@ -361,7 +489,7 @@ running    → 写 url（优先主域名，回退 <fqdn>:<port>），finished_at
 **为什么部署是异步任务而不是同步请求**：构建可能几十秒，同步会打爆浏览器与反向代理超时；
 异步 + 流式输出实现简单、可断线重连、日志天然可增量。
 
-### 9.1 并发控制：三道闸
+### 10.1 并发控制：三道闸
 
 部署是最容易出竞态的地方，所以设了三层：
 
@@ -371,7 +499,7 @@ running    → 写 url（优先主域名，回退 <fqdn>:<port>），finished_at
    后台任务在同一进程里交错。
 3. **版本号**：`v<n>` 在创建时按已有条数计算，配合状态闸不会出现两个 v3。
 
-### 9.2 日志传输：SSE 而不是轮询
+### 10.2 日志传输：SSE 而不是轮询
 
 ```
 GET /deployments/{id}/stream        text/event-stream
@@ -389,11 +517,11 @@ GET /deployments/{id}/stream        text/event-stream
 
 ---
 
-## 10. 安全与护栏
+## 11. 安全与护栏
 
 三个独立开关，默认都朝"本地好用"倾斜，但每一个都能一行配置变严。
 
-### 10.1 鉴权：一个中间件，两条协议
+### 11.1 鉴权：一个中间件，两条协议
 
 ```
 request ──▶ principal_middleware
@@ -417,7 +545,7 @@ request ──▶ principal_middleware
 前端侧：`lib/auth.ts` 存 token，`lib/api.ts` 统一附带 header；任何 401 派发
 `wb:unauthorized`，`TokenGate` 收到后弹一次解锁框。**一个提示，而不是 N 个烂页面。**
 
-### 10.2 SQL 护栏：白名单 + 逃生舱黑名单
+### 11.2 SQL 护栏：白名单 + 逃生舱黑名单
 
 数据库控制台连的是真实 sqlite 文件，所以"用户写什么就执行什么"是明显的坑。护栏
 不写 SQL 解析器，用两步：
@@ -435,7 +563,7 @@ request ──▶ principal_middleware
 
 `WB_SQL_MODE=write` 放开语句类型限制，但黑名单永远生效。
 
-### 10.3 前向兼容迁移
+### 11.3 前向兼容迁移
 
 `SQLModel.metadata.create_all` 不会 ALTER 已存在的表，于是"给 `Project` 加一列"
 在已有库上会静默炸掉所有 select。`core/migrate.py` 在启动时补齐：
@@ -447,7 +575,7 @@ inspect(engine) → 对比 COLUMNS 声明 → ALTER TABLE ... ADD COLUMN → 建
 规则只有一条：**只加，不改，不删**。需要重命名就新增一列 + 双写 + 后续清理，
 真正的迁移工具（Alembic）留到多副本部署时再上。
 
-### 10.4 创建回滚
+### 11.4 创建回滚
 
 项目创建横跨四个 Provider，任何一步失败都不能留下半套云资源：
 
@@ -465,11 +593,11 @@ inspect(engine) → 对比 COLUMNS 声明 → ALTER TABLE ... ADD COLUMN → 建
 
 ---
 
-## 11. 前端表现层：i18n 与布局偏好
+## 12. 前端表现层：i18n 与布局偏好
 
 表现层只有两条规则：**文案不进组件、偏好不进数据库**。
 
-### 11.1 类型化字典
+### 12.1 类型化字典
 
 `lib/i18n.tsx` 用 `en` 对象作为唯一真相源：
 
@@ -498,7 +626,7 @@ relativeTime(project.updated_at, locale);   // "2h ago" / "2 小时前"
 - **需要内嵌 `<code>` 的句子**用占位符切分（`t("mcp.desc").split("{path}")`），
   避免把 JSX 塞进字典。
 
-### 11.2 布局偏好
+### 12.2 布局偏好
 
 `lib/prefs.tsx` 只持有影响 DOM 结构的偏好（当前是导航位置）：
 
@@ -517,12 +645,13 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 
 ---
 
-## 12. 扩展点总览
+## 13. 扩展点总览
 
 | 想做的事 | 动哪里 | 要不要改前端 |
 | --- | --- | --- |
 | 换云存储 / 云数据库 / DNS / 部署目标 | 新增 `providers/<cloud>/*.py` + 改 `.env` 一行 | 否 |
 | 加一套新模板 | `templates.py` 加一个 dataclass | 否（目录自动展示） |
+| 加一类项目（改变目录/命令/健康检查） | `conventions.py` 加一个 `TypeSpec` | 否（规范页/预览/Agent 自动同步） |
 | 加一个 Agent 可用的能力 | `system_tools.py` 加函数 + 注册进 `TOOLS` | 否（REST/MCP/Agent 自动同步） |
 | 换模型供应商 | 设 `WB_LLM_BASE_URL` / `WB_LLM_MODEL` | 否 |
 | 换 Agent 框架 | 继承 `Harness` + `register_harness` | 否 |
@@ -538,7 +667,7 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 
 ---
 
-## 13. 已知限制与下一步
+## 14. 已知限制与下一步
 
 | 限制 | 现状 | 建议 |
 | --- | --- | --- |
@@ -547,13 +676,16 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 | 部署串行化仅进程内 | 多副本部署时 `_RUN_LOCKS` 各管各的 | 活跃部署改为数据库唯一约束（partial unique index） |
 | 项目创建非事务 | 已加补偿回滚，但非原子 | Provider 侧提供两阶段（prepare/commit）能力 |
 | MCP 鉴权依赖客户端 | 需客户端主动带 header | 网关层做 mTLS 或统一反代鉴权 |
-| Agent 写入无影子副本 | 直接落盘，覆盖即覆盖 | 写入前 `git stash`/自动 commit，支持一键回滚 |
+| Agent 写入无影子副本 | 直接落盘，覆盖即覆盖 | 已具备 `git_restore_file` / `git_revert_commit`，可再在 `write_project_file` 前自动 commit 形成每步快照 |
+| 预览宿主在控制面进程内 | 重启后端即丢掉预览进程 | 状态接口用端口探活把死行降为 `stopped`；彻底方案是把预览交给独立 supervisor 进程 |
+| 编辑器无多文件搜索替换 | 仅有编辑器内的查找交互与 `search_project` 接口 | 在 Code 标签页左侧搜索面板接 `search_project` 结果 |
+| 发布不推送远端 | `git tag deploy/v<N>` 只在本地 | 接 `git push --tags` 或改成调用远端 CI |
 | 端口分配非原子 | 单进程内顺序分配 | 多副本部署时改用数据库唯一约束 + 重试 |
 | 语言首屏翻转 | 默认 en，hydration 后切到存储的 zh | 改读 cookie 让 SSR 直接出正确语言 |
 
 ---
 
-## 14. 目录速查
+## 15. 目录速查
 
 ```
 backend/
@@ -563,21 +695,25 @@ backend/
     schemas.py           请求/响应契约
     core/                config(全部 WB_* 配置) / db / security(令牌+RBAC)
                          migrate(前向兼容) / errors / ids
-    api/                 projects / platform / registry / system
-    services/            scaffold / templates / deployments / system_tools
+    api/                 projects / workspace / platform / registry / system
+    services/            conventions(类型规范) / scaffold / templates
+                         gitops(唯一 git 接缝) / deployments / system_tools
                          agent_runtime(local+llm harness) / llm / sql_guard
                          serializers
     providers/           base(SPI+registry) + local/{storage,database,domain,deploy}
+                         local/static_host(无依赖也能托管的预览宿主)
     mcp/server.py        fastmcp 服务端，与 REST 同端口
   tools/mock_llm.py      离线验证 LLM 链路的假端点（OpenAI 兼容）
 frontend/
-  app/                   11 个路由（含 /projects/[id] 五标签页、/settings）
+  app/                   11 个路由（含 /projects/[id] 八标签页、/settings）
   components/            Shell(导航布局) / Rail / Topbar / NavLinks
                          Preferences(语言·主题·导航) / TokenGate(401 解锁)
                          CreateProjectDialog / LogViewer / ProjectCard
-                         Icon(全 SVG) / ui
+                         CodeEditor(textarea+高亮 pre，零依赖) / Icon(全 SVG) / ui
   lib/                   api / auth(token) / types / format(状态映射)
                          i18n(类型化字典) / prefs(布局偏好) / nav(单一真相源)
 docs/architecture.md     本文档
+docs/conventions/        三类项目规范 + 约定大于配置的设计说明
+scripts/shoot.mjs        端到端走查 + 截图脚本
 data/                    运行时生成（已 gitignore）
 ```

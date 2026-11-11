@@ -29,12 +29,24 @@ export interface Deployment {
   environment: string;
   status: "queued" | "building" | "deploying" | "running" | "failed" | "stopped";
   version: string;
+  commit_sha?: string;
+  image?: string;
   url: string;
   provider: string;
   error: string;
   log?: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface ProjectPreview {
+  fqdn: string;
+  url: string;
+  port: number | null;
+  command: string;
+  status: string;
+  deployment: Deployment | null;
+  last_deployed: Deployment | null;
 }
 
 export interface Project {
@@ -48,9 +60,14 @@ export interface Project {
   template_version: string;
   repo_path: string;
   runtime: string;
+  build_command: string;
   run_command: string;
+  dev_command: string;
+  dev_port: number | null;
+  health_path: string;
   port: number | null;
   url: string;
+  preview: ProjectPreview;
   git_initialized: boolean;
   owner_id: string;
   created_at: string | null;
@@ -60,6 +77,94 @@ export interface Project {
   domains: DomainBinding[];
   deployment: Deployment | null;
   deployment_count: number;
+}
+
+export interface PreviewState {
+  project_id: string;
+  environment: string;
+  fqdn: string;
+  url: string;
+  port: number | null;
+  command: string;
+  status: string;
+  latest: Deployment | null;
+}
+
+export interface GitFile {
+  path: string;
+  status: "modified" | "added" | "deleted" | "renamed" | "untracked";
+  staged: boolean;
+  additions: number;
+  deletions: number;
+}
+
+export interface GitCommit {
+  sha: string;
+  short: string;
+  author: string;
+  date: string;
+  message: string;
+  tags: string[];
+  refs: string[];
+}
+
+export interface GitStatus {
+  is_repo: boolean;
+  branch: string;
+  files: GitFile[];
+  clean: boolean;
+  ahead: number;
+  behind: number;
+  head: GitCommit | null;
+  tags: string[];
+  staged_count: number;
+}
+
+export interface GitDiff {
+  path: string;
+  ref: string;
+  diff: string;
+  additions?: number;
+  deletions?: number;
+  error?: string;
+}
+
+export interface ConventionCheck {
+  key: string;
+  title: string;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+}
+
+export interface ConventionReport {
+  type: string;
+  label: string;
+  summary: string;
+  spec: {
+    type: string;
+    label: string;
+    summary: string;
+    layout: { path: string; meaning: string }[];
+    commands: { dev: string; build: string; run: string };
+    health_path: string;
+    resources: string[];
+    conventions: { key: string; title: string; detail: string }[];
+  };
+  commands: { dev: string; build: string; run: string; health_path: string };
+  preview: { fqdn: string; suffix: string; port: number | null; url: string };
+  manifest: { path: string; present: boolean; overrides: Record<string, string> };
+  checks: ConventionCheck[];
+  score: { pass: number; warn: number; fail: number };
+  conformant: boolean;
+}
+
+export interface PublishResult {
+  project_id: string;
+  version: string;
+  commit: { committed: boolean; sha: string; short: string };
+  tag: { tag?: string; error?: string };
+  deployment: Deployment;
+  summary: string;
 }
 
 export interface TemplateVariable {

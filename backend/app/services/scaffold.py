@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +25,7 @@ from app.models import (
     utcnow,
 )
 from app.providers import database_provider, domain_provider, storage_provider
+from app.services import conventions, gitops
 from app.services.templates import TemplateRegistry, TemplateSpec, build_registry, render
 
 _templates: TemplateRegistry | None = None
@@ -74,24 +74,32 @@ def _unique_slug(session: Session, candidate: str) -> str:
     return slug
 
 
-def build_context(spec: CreateProjectSpec, template: TemplateSpec, slug: str, port: int) -> dict[str, str]:
+def build_context(
+    spec: CreateProjectSpec, template: TemplateSpec, slug: str, port: int, dev_port: int
+) -> dict[str, str]:
+    suffix = settings.preview_suffix
     fqdn = f"{slug}.{settings.domain_suffix}"
+    preview_fqdn = f"{slug}{suffix}.{settings.domain_suffix}"
     db_name = slug.replace("-", "_")
+    base = settings.domain_base_url
     ctx = {
         "project_name": spec.name,
         "slug": slug,
         "description": spec.description or template.description,
         "port": str(port),
+        "dev_port": str(dev_port),
         "fqdn": fqdn,
-        "fqdn_url": f"http://{fqdn}:{port}" if not settings.domain_base_url else settings.domain_base_url,
-        "api_base": f"http://{fqdn}:{port}" if not settings.domain_base_url else settings.domain_base_url,
+        "fqdn_url": f"http://{fqdn}:{port}" if not base else base,
+        "preview_fqdn": preview_fqdn,
+        "preview_url": f"http://{preview_fqdn}:{dev_port}" if not base else base,
+        "api_base": f"http://{fqdn}:{port}" if not base else base,
         "storage_bucket": f"{slug}-assets",
         "db_name": db_name,
         "db_dsn": f"sqlite:///./data/{db_name}.db",
         "template_key": template.key,
         "template_version": template.version,
         "project_type": template.type,
-        "dev_command": template.run_command or "see README",
+        "dev_command": template.dev_command or template.run_command or "see README",
         "year": str(datetime.now(timezone.utc).year),
     }
     ctx.update({k: str(v) for k, v in spec.variables.items() if v is not None})
@@ -108,9 +116,13 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
     # pure CJK names produce no ASCII slug — fall back to a stable random handle
     candidate = slugify(spec.slug or spec.name) or f"app-{random_suffix(5)}"
     slug = _unique_slug(session, candidate)
-    taken_ports = {p.port for p in session.exec(select(Project)).all() if p.port}
+    existing = session.exec(select(Project)).all()
+    # a preview must never compete with production for a socket, so it gets its own
+    # port from the same range; both are derived, never configured
+    taken_ports = {p.port for p in existing if p.port} | {p.dev_port for p in existing if p.dev_port}
     port = allocate_port(taken_ports)
-    context = build_context(spec, template, slug, port)
+    dev_port = allocate_port(taken_ports | {port})
+    context = build_context(spec, template, slug, port, dev_port)
 
     repo_path = settings.projects_dir / slug
     if repo_path.exists():
@@ -127,8 +139,14 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
         status=ProjectStatus.CREATING,
         repo_path=repo_path.as_posix(),
         runtime=template.runtime,
+        build_command=render(template.build_command, context),
         run_command=render(template.run_command, context),
         port=port,
+        dev_command=render(template.dev_command, context),
+        dev_port=dev_port,
+        preview_fqdn=context["preview_fqdn"],
+        preview_url=context["preview_url"],
+        health_path=template.health_path or "/",
         primary_url=context["fqdn_url"],
         meta={"variables": context},
     )
@@ -141,9 +159,16 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
         project.meta = {**project.meta, "files": sorted(template.files)}
         _provision_resources(session, project, template, spec.resources or template.resources, context)
         _set_env(session, project, context)
-        _bind_domain(session, project, context["fqdn"], port)
-        _git_init(repo_path)
-        project.git_initialized = (repo_path / ".git").exists()
+        _bind_domain(session, project, context["fqdn"], port, is_primary=True)
+        _bind_domain(
+            session,
+            project,
+            context["preview_fqdn"],
+            dev_port,
+            is_primary=False,
+            auto_generated=True,
+        )
+        project.git_initialized = gitops.ensure_repo(repo_path)
     except Exception as exc:  # noqa: BLE001 - surface any provider/template failure to the UI
         rolled_back = _rollback(session, project, context)
         project.status = ProjectStatus.FAILED
@@ -217,7 +242,7 @@ def _write_files(root: Path, template: TemplateSpec, context: dict[str, str]) ->
     root.mkdir(parents=True, exist_ok=False)
     for rel, content in template.files.items():
         target = (root / rel).resolve()
-        if not str(target).startswith(str(root.resolve())):
+        if not target.is_relative_to(root.resolve()):
             raise ValidationFailed(f"模板文件路径越界: {rel}")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(render(content, context), encoding="utf-8", newline="\n")
@@ -275,6 +300,8 @@ def _set_env(session: Session, project: Project, context: dict[str, str]) -> Non
         "STORAGE_ENDPOINT": (settings.storage_dir / context["storage_bucket"]).as_posix(),
         "PUBLIC_URL": context["fqdn_url"],
         "PORT": context["port"],
+        "PREVIEW_URL": context["preview_url"],
+        "DEV_PORT": context["dev_port"],
     }
     for key, value in values.items():
         session.add(
@@ -291,39 +318,37 @@ def _set_env(session: Session, project: Project, context: dict[str, str]) -> Non
     env_file.write_text("\n".join(f"{k}={v}" for k, v in values.items()) + "\n", encoding="utf-8")
 
 
-def _bind_domain(session: Session, project: Project, fqdn: str, port: int) -> None:
+def _bind_domain(
+    session: Session,
+    project: Project,
+    fqdn: str,
+    port: int,
+    *,
+    is_primary: bool = True,
+    auto_generated: bool = True,
+) -> DomainBinding:
     target = settings.domain_base_url or f"127.0.0.1:{port}"
     info = domain_provider().bind(fqdn, target=target, project_id=project.id)
-    session.add(
-        DomainBinding(
-            id=new_id("dom"),
-            project_id=project.id,
-            fqdn=fqdn,
-            suffix=settings.domain_suffix,
-            provider=info.provider,
-            status=info.status,
-            target=target,
-            is_primary=True,
-            auto_generated=True,
-        )
+    row = DomainBinding(
+        id=new_id("dom"),
+        project_id=project.id,
+        fqdn=fqdn,
+        suffix=settings.domain_suffix,
+        provider=info.provider,
+        status=info.status,
+        target=target,
+        is_primary=is_primary,
+        auto_generated=auto_generated,
     )
+    session.add(row)
     session.commit()
+    session.refresh(row)
+    return row
 
 
 def _git_init(root: Path) -> None:
-    """Best effort: a scaffolded project should be a repo from minute zero."""
-    try:
-        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
-        subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "-c", "user.name=AI Workbench", "-c", "user.email=workbench@local",
-             "commit", "-qm", "chore: scaffold project"],
-            cwd=root,
-            check=True,
-            capture_output=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        pass
+    """Kept as a thin alias: git is the project's history from minute zero."""
+    gitops.ensure_repo(root)
 
 
 def get_project(session: Session, project_id: str) -> Project:
@@ -332,6 +357,67 @@ def get_project(session: Session, project_id: str) -> Project:
         project = session.exec(select(Project).where(Project.slug == project_id)).first()
     if project is None:
         raise NotFoundError(f"项目不存在: {project_id}")
+    return project
+
+
+def ensure_preview(session: Session, project: Project) -> Project:
+    """Derive the preview port / command / domain for a project.
+
+    New projects get all of it at scaffold time. Older rows (or a hand-copied
+    workspace) are healed here instead of failing with a missing column value, so
+    "debug" never depends on *when* a project was created.
+    """
+    changed = False
+    if not project.dev_port:
+        existing = session.exec(select(Project)).all()
+        taken = {p.port for p in existing if p.port} | {p.dev_port for p in existing if p.dev_port}
+        project.dev_port = allocate_port(taken)
+        changed = True
+
+    resolved = conventions.resolve(project)
+    if not project.dev_command:
+        project.dev_command = resolved.dev_command
+        changed = True
+    if not project.build_command and resolved.build_command:
+        project.build_command = resolved.build_command
+        changed = True
+    # "/" is the column default, so it cannot be told apart from a legacy row that
+    # never had the template's health path. Only the default is upgraded.
+    spec_health = resolved.spec.health_path
+    if not project.health_path or (project.health_path == "/" and spec_health not in {"", "/"}):
+        project.health_path = spec_health
+        changed = True
+
+    fqdn = conventions.preview_fqdn(project)
+    if project.preview_fqdn != fqdn:
+        project.preview_fqdn = fqdn
+        changed = True
+    url = conventions.preview_url(project, project.dev_port)
+    if project.preview_url != url:
+        project.preview_url = url
+        changed = True
+
+    bound = session.exec(
+        select(DomainBinding).where(
+            DomainBinding.project_id == project.id, DomainBinding.fqdn == project.preview_fqdn
+        )
+    ).first()
+    if bound is None:
+        _bind_domain(
+            session,
+            project,
+            project.preview_fqdn,
+            project.dev_port,
+            is_primary=False,
+            auto_generated=True,
+        )
+        changed = True
+
+    if changed:
+        project.updated_at = utcnow()
+        session.add(project)
+        session.commit()
+        session.refresh(project)
     return project
 
 
@@ -368,7 +454,7 @@ def delete_project(session: Session, project: Project, *, purge_files: bool = Fa
 # file tree (powers the built-in editor / IDE fallback)
 # ---------------------------------------------------------------------------
 
-IGNORED = {"node_modules", ".git", ".venv", "__pycache__", "dist", ".next"}
+IGNORED = {"node_modules", ".git", ".venv", "__pycache__", "dist", ".next", ".env"}
 MAX_FILE_BYTES = 512 * 1024
 
 
@@ -400,7 +486,8 @@ def list_tree(project: Project) -> list[dict]:
 def _safe_path(project: Project, rel: str) -> Path:
     root = project_root(project)
     target = (root / rel).resolve()
-    if not str(target).startswith(str(root)):
+    # ``is_relative_to`` instead of a string prefix: /w/app-evil must not pass for /w/app
+    if not target.is_relative_to(root):
         raise ValidationFailed("非法的文件路径")
     return target
 
@@ -434,3 +521,46 @@ def delete_file(project: Project, rel: str) -> dict:
         parent.rmdir()
         parent = parent.parent
     return {"path": rel, "deleted": True, "bytes": size}
+
+
+TEXT_SUFFIXES = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".css", ".html", ".md", ".txt",
+    ".yaml", ".yml", ".toml", ".sql", ".sh", ".env", ".cfg", ".ini",
+}
+
+
+def search_text(project: Project, query: str, *, limit: int = 40) -> list[dict]:
+    """Case-insensitive line search across the workspace.
+
+    An agent that can only read one file at a time burns its step budget guessing
+    paths; one grep call usually replaces five reads.
+    """
+    needle = (query or "").strip().lower()
+    if not needle:
+        raise ValidationFailed("搜索内容不能为空")
+    root = project_root(project)
+    hits: list[dict] = []
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        if any(part in IGNORED for part in rel.parts) or not path.is_file():
+            continue
+        if path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        if path.stat().st_size > MAX_FILE_BYTES:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for number, line in enumerate(lines, start=1):
+            if needle in line.lower():
+                hits.append(
+                    {
+                        "path": rel.as_posix(),
+                        "line": number,
+                        "text": line.strip()[:240],
+                    }
+                )
+                if len(hits) >= limit:
+                    return hits
+    return hits

@@ -1,17 +1,23 @@
 import type {
   Agent,
   AgentRun,
+  ConventionReport,
   Deployment,
   DomainBinding,
   EnvVar,
   EventItem,
+  GitCommit,
+  GitDiff,
+  GitStatus,
   HarnessReport,
   LlmStatus,
   LlmTest,
   McpServer,
   Me,
   Overview,
+  PreviewState,
   Project,
+  PublishResult,
   Settings,
   Skill,
   SqlMode,
@@ -99,6 +105,43 @@ export const api = {
     ),
   writeFile: (id: string, path: string, content: string) =>
     put<{ path: string; size: number }>(`/projects/${id}/file`, { path, content }),
+  deleteFile: (id: string, path: string) =>
+    del(`/projects/${id}/file?path=${encodeURIComponent(path)}`),
+
+  // --- conventions ---------------------------------------------------------
+  conventions: (id: string) => request<ConventionReport>(`/projects/${id}/conventions`),
+
+  // --- preview / debug -----------------------------------------------------
+  preview: (id: string) => request<PreviewState>(`/projects/${id}/preview`),
+  startPreview: (id: string) => post<Deployment>(`/projects/${id}/preview/start`),
+  stopPreview: (id: string) => post<Deployment>(`/projects/${id}/preview/stop`),
+  runProject: (id: string) => post<Deployment>(`/projects/${id}/run`),
+  publish: (id: string, message = "") =>
+    post<PublishResult>(`/projects/${id}/publish`, { message }),
+
+  // --- version control -----------------------------------------------------
+  gitStatus: (id: string) => request<GitStatus>(`/projects/${id}/git`),
+  gitLog: (id: string, limit = 30) =>
+    request<{ commits: GitCommit[]; tags: string[] }>(
+      `/projects/${id}/git/log?limit=${limit}`,
+    ),
+  gitDiff: (id: string, path = "", ref = "") =>
+    request<GitDiff>(
+      `/projects/${id}/git/diff?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}`,
+    ),
+  gitShow: (id: string, sha: string) =>
+    request<GitDiff>(`/projects/${id}/git/show?sha=${encodeURIComponent(sha)}`),
+  gitCommit: (id: string, message: string, paths: string[] = []) =>
+    post<{ committed: boolean; sha?: string; short?: string; reason?: string }>(
+      `/projects/${id}/git/commit`,
+      { message, paths },
+    ),
+  gitRestore: (id: string, path: string, ref = "HEAD") =>
+    post<{ path: string; restored: boolean }>(`/projects/${id}/git/restore`, { path, ref }),
+  gitRevert: (id: string, sha: string) =>
+    post<{ reverted: string; committed: boolean; short?: string }>(`/projects/${id}/git/revert`, {
+      ref: sha,
+    }),
 
   env: (id: string) => request<EnvVar[]>(`/projects/${id}/env`),
   upsertEnv: (id: string, key: string, value: string, isSecret = false) =>

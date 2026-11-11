@@ -44,6 +44,11 @@ class TemplateSpec:
     tags: list[str] = field(default_factory=list)
     runtime: str = ""
     run_command: str = ""
+    # convention defaults, rendered at scaffold time; a project may override them in
+    # workbench.yaml without touching its type spec
+    dev_command: str = ""
+    build_command: str = ""
+    health_path: str = "/"
     resources: list[str] = field(default_factory=lambda: ["storage", "database"])
     variables: list[TemplateVariable] = field(default_factory=list)
     files: dict[str, str] = field(default_factory=dict)
@@ -61,6 +66,9 @@ class TemplateSpec:
             "tags": self.tags,
             "runtime": self.runtime,
             "run_command": self.run_command,
+            "dev_command": self.dev_command,
+            "build_command": self.build_command,
+            "health_path": self.health_path,
             "resources": self.resources,
             "variables": [
                 {
@@ -316,6 +324,9 @@ def _builtin() -> list[TemplateSpec]:
             icon="layers",
             runtime="node+python",
             run_command="npm --prefix frontend run dev",
+            dev_command="npm --prefix frontend run dev -- --port {{dev_port}}",
+            build_command="npm --prefix frontend install",
+            health_path="/health",
             variables=common_vars,
             files={
                 "backend/pyproject.toml": '[project]\nname = "{{slug}}-api"\nversion = "0.1.0"\nrequires-python = ">=3.11"\ndependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "fastmcp>=2.3"]\n\n[tool.uv]\npackage = false\n',
@@ -325,7 +336,7 @@ def _builtin() -> list[TemplateSpec]:
                     'from fastmcp import FastMCP\n\napp = FastAPI(title="{{project_name}}", version="0.1.0")\nmcp = FastMCP("{{slug}}")\n\n\n@mcp.tool\ndef project_info() -> dict[str, object]:\n    """Return project metadata for agents."""\n    return info()',
                 )
                 + '\n\napp.mount("/mcp", mcp.http_app(path="/"))\n',
-                "frontend/package.json": '{\n  "name": "{{slug}}-web",\n  "private": true,\n  "scripts": { "dev": "vite --port {{port}} --host", "build": "vite build", "preview": "vite preview" },\n  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },\n  "devDependencies": { "@vitejs/plugin-react": "^4.3.4", "typescript": "^5.7.2", "vite": "^6.0.5" }\n}\n',
+                "frontend/package.json": '{\n  "name": "{{slug}}-web",\n  "private": true,\n  "scripts": { "dev": "vite --host", "build": "vite build", "preview": "vite preview --host" },\n  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },\n  "devDependencies": { "@vitejs/plugin-react": "^4.3.4", "typescript": "^5.7.2", "vite": "^6.0.5" }\n}\n',
                 "frontend/vite.config.ts": 'import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({\n  plugins: [react()],\n  server: { port: {{port}}, strictPort: true },\n});\n',
                 "frontend/index.html": '<!doctype html>\n<html lang="zh-CN">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1" />\n    <title>{{project_name}}</title>\n  </head>\n  <body>\n    <div id="root"></div>\n    <script type="module" src="/src/main.tsx"></script>\n  </body>\n</html>\n',
                 "frontend/src/main.tsx": 'import React from "react";\nimport { createRoot } from "react-dom/client";\nimport App from "./App";\nimport "./styles.css";\n\ncreateRoot(document.getElementById("root")!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n);\n',
@@ -345,10 +356,13 @@ def _builtin() -> list[TemplateSpec]:
             icon="layout",
             runtime="node",
             run_command="npm run dev",
+            dev_command="npm run dev -- --port {{dev_port}}",
+            build_command="npm install",
+            health_path="/",
             resources=["storage"],
             variables=common_vars,
             files={
-                "package.json": '{\n  "name": "{{slug}}",\n  "private": true,\n  "scripts": { "dev": "vite --port {{port}} --host", "build": "vite build", "preview": "vite preview --port {{port}}" },\n  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },\n  "devDependencies": { "@vitejs/plugin-react": "^4.3.4", "typescript": "^5.7.2", "vite": "^6.0.5" }\n}\n',
+                "package.json": '{\n  "name": "{{slug}}",\n  "private": true,\n  "scripts": { "dev": "vite --host", "build": "vite build", "preview": "vite preview --host" },\n  "dependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },\n  "devDependencies": { "@vitejs/plugin-react": "^4.3.4", "typescript": "^5.7.2", "vite": "^6.0.5" }\n}\n',
                 "vite.config.ts": 'import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({\n  plugins: [react()],\n  server: { port: {{port}}, strictPort: true },\n});\n',
                 "index.html": '<!doctype html>\n<html lang="zh-CN">\n  <head>\n    <meta charset="utf-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1" />\n    <title>{{project_name}}</title>\n  </head>\n  <body>\n    <div id="root"></div>\n    <script type="module" src="/src/main.tsx"></script>\n  </body>\n</html>\n',
                 "src/main.tsx": 'import React from "react";\nimport { createRoot } from "react-dom/client";\nimport App from "./App";\nimport "./styles.css";\n\ncreateRoot(document.getElementById("root")!).render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>,\n);\n',
@@ -367,6 +381,11 @@ def _builtin() -> list[TemplateSpec]:
             icon="server",
             runtime="python",
             run_command="python -m uvicorn app.main:app --host 0.0.0.0 --port {{port}}",
+            dev_command=(
+                "python -m uvicorn app.main:app --host 0.0.0.0 --port {{dev_port}} --reload"
+            ),
+            build_command="",
+            health_path="/health",
             variables=common_vars,
             files={
                 "pyproject.toml": '[project]\nname = "{{slug}}"\nversion = "0.1.0"\nrequires-python = ">=3.11"\ndependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "fastmcp>=2.3"]\n\n[tool.uv]\npackage = false\n',
@@ -391,6 +410,10 @@ def _builtin() -> list[TemplateSpec]:
             icon="cpu",
             runtime="python",
             run_command="python -m uvicorn app.main:app --host 0.0.0.0 --port {{port}}",
+            dev_command=(
+                "python -m uvicorn app.main:app --host 0.0.0.0 --port {{dev_port}} --reload"
+            ),
+            health_path="/health",
             variables=[
                 TemplateVariable("description", "项目描述", "一个可被工作台编排的 Agent 服务"),
                 TemplateVariable("model", "模型", "workbuddy-flash"),
@@ -456,6 +479,9 @@ class DirectoryTemplateSource(TemplateSource):
             tags=data.get("tags", []),
             runtime=data.get("runtime", ""),
             run_command=data.get("run_command", ""),
+            dev_command=data.get("dev_command", ""),
+            build_command=data.get("build_command", ""),
+            health_path=data.get("health_path", "/"),
             resources=data.get("resources", ["storage", "database"]),
             variables=variables,
             files=files,

@@ -95,7 +95,17 @@ def _highlights(steps: list[Step]) -> list[str]:
         result = step.result
         if result.get("url") and result.get("url") not in seen:
             seen.add(result["url"])
-            lines.append(f"- 项目入口：{result['url']}（{result.get('name') or result.get('slug')}）")
+            label = result.get("name") or result.get("slug")
+            lines.append(f"- 项目入口：{result['url']}" + (f"（{label}）" if label else ""))
+        if result.get("tag"):
+            signature = f"tag:{result['tag']}"
+            if signature not in seen:
+                seen.add(signature)
+                commit = result.get("commit") if isinstance(result.get("commit"), dict) else {}
+                lines.append(
+                    f"- 发布 {result.get('version', '')} · {result['tag']}"
+                    f"（commit {commit.get('short') or 'n/a'}）"
+                )
         for key in ("deployment", "latest"):
             dep = result.get(key)
             if isinstance(dep, dict) and dep.get("version"):
@@ -136,23 +146,27 @@ def _reindex(steps: list[Step]) -> list[Step]:
 # ---------------------------------------------------------------------------
 
 
-SYSTEM_PROMPT = """你是 AI Workbench 的操盘 Agent。你可以通过工具真实地创建、修改、部署应用。
+SYSTEM_PROMPT = """你是 AI Workbench 的操盘 Agent。你可以通过工具真实地创建、修改、调试、发布应用。
 
-工作台约定（约定大于配置，不要自己发明路径或名字）：
-- 项目工作区：data/projects/<slug>
-- 对象存储桶：<slug>-assets
-- 数据库名：slug 中的 "-" 换成 "_"
-- 主域名：<slug>.<域名后缀>
-- 每个项目自动注入 DATABASE_URL / STORAGE_BUCKET / STORAGE_ENDPOINT / PUBLIC_URL / PORT
+工作台约定（约定大于配置，不要自己发明路径、端口或域名）：
+- 三类项目：fullstack（backend/ + frontend/）、frontend（只有静态产物）、backend（app/main.py）。
+  先调用 check_project_conventions 拿到该类型的目录布局、命令与体检结果，再动手。
+- 项目工作区：data/projects/<slug>；对象存储桶 <slug>-assets；数据库名 slug 中的 "-" 换成 "_"。
+- 生产域名：<slug>.<域名后缀>；调试（预览）域名：<slug>-dev.<域名后缀>，独立端口、独立进程。
+- 平台自动注入 DATABASE_URL / STORAGE_BUCKET / STORAGE_ENDPOINT / PUBLIC_URL / PORT /
+  PREVIEW_URL / DEV_PORT，应用只读不写；不要硬编码域名。
+- 唯一允许的配置文件是项目根目录的 workbench.yaml（可选，任意字段），其他一切按约定推导。
 
-规则：
-1. 先看再动。修改前用 get_project / list_project_files / read_project_file 确认现状。
-2. 一次只做一个可验证的动作，拿到工具结果再决定下一步。
-3. 写文件要写完整内容，不要写 diff、不要写省略号。
-4. 改完代码要 deploy_project，再用 deployment_status 确认状态，失败要看 log_tail。
-5. 查数据库只能读（SELECT / WITH / EXPLAIN），不要尝试写库或改 schema。
-6. 工具报错不要重复同样的调用，换参数或换思路；三次失败就停下来向用户说明。
-7. 最终回答用中文，简洁说明做了什么、结果如何、下一步建议；不要罗列内部 JSON。
+工作流：
+1. 先看再动：check_project_conventions + list_project_files / search_project / read_project_file。
+2. 一次只做一个可验证的动作；写文件写完整内容，不要写 diff 或省略号。
+3. 调试：start_preview，然后 preview_status 读 log_tail；失败按日志修，不要盲目重试。
+4. 发布：publish_project（自带 git commit + tag deploy/v<N> + 部署该 commit），再用
+   deployment_status 确认；需要在发布前留下可回滚点就先用 git_commit。
+5. 回滚：git_log 找到目标 sha → git_revert_commit → 再 publish_project。
+6. 查数据库只能读（SELECT / WITH / EXPLAIN）。
+7. 工具报错不要重复同样的调用，换参数或换思路；三次失败就停下来向用户说明。
+8. 最终回答用中文，简洁说明做了什么、预览/生产地址、下一步建议；不要罗列内部 JSON。
 """
 
 
@@ -305,8 +319,31 @@ class LocalHarness(Harness):
             steps.append(step)
             return step.result
 
+        def target() -> str | None:
+            """Resolve the project the prompt is about, without asking the user.
+
+            Matching on slug *and* name before falling back to the first project
+            matters: "debug customer-success" must not silently operate on whatever
+            happens to be created first.
+            """
+            if task.project_id:
+                return task.project_id
+            projects = call("需要确定目标项目，先列出工作台项目", "list_projects") or []
+            for item in projects:
+                for key in (item.get("slug"), item.get("name")):
+                    if key and str(key).lower() in lowered:
+                        return item["id"]
+            return projects[0]["id"] if projects else None
+
         wants_create = bool(re.search(r"创建|新建|生成|搭建|create|scaffold|new app", lowered))
-        wants_deploy = bool(re.search(r"部署|上线|发布|deploy|release", lowered))
+        wants_publish = bool(re.search(r"发布|上线|release|publish|ship", lowered))
+        wants_preview = bool(re.search(r"预览|调试|debug|preview|dev server", lowered))
+        wants_run = bool(re.search(r"运行|启动|跑起来|\brun\b|start", lowered))
+        wants_revert = bool(re.search(r"回滚|revert|rollback|退回到", lowered))
+        wants_discard = bool(re.search(r"撤销|放弃|discard|还原", lowered))
+        wants_git = bool(re.search(r"版本|提交|commit|\bgit\b|历史|history", lowered))
+        wants_convention = bool(re.search(r"规范|约定|体检|convention|conformance", lowered))
+        wants_deploy = bool(re.search(r"部署|deploy", lowered))
         wants_status = bool(re.search(r"状态|日志|status|log", lowered))
         wants_list = bool(re.search(r"列出|列表|所有项目|list", lowered))
 
@@ -317,35 +354,86 @@ class LocalHarness(Harness):
             )
             name = self._extract_name(prompt)
             created = call(
-                f"选定模板 {template_key} 并创建工作区、对象存储、数据库与 <slug>.{settings.domain_suffix} 域名",
+                f"选定模板 {template_key} 并创建工作区、对象存储、数据库，同时分配生产与预览域名",
                 "create_project",
                 name=name,
                 template_key=template_key,
                 description=prompt[:160],
             )
-            if isinstance(created, dict) and wants_deploy:
-                call("按约定执行首次部署并等待健康检查", "deploy_project", project_id=created["id"])
-            if isinstance(created, dict):
-                call("回读项目状态，确认资源与域名绑定", "get_project", project_id=created["id"])
+            if not isinstance(created, dict):
+                return render_report(prompt, steps), steps
+            call("读取该类型的规范与体检结果", "check_project_conventions", project_id=created["id"])
+            if wants_preview or wants_run or wants_publish:
+                call("启动预览环境", "start_preview", project_id=created["id"])
+                call("读取预览状态与日志", "preview_status", project_id=created["id"])
+            if wants_publish:
+                call("提交并发布首个版本", "publish_project", project_id=created["id"], message="首次发布")
+                call("确认部署状态", "deployment_status", project_id=created["id"])
             return render_report(prompt, steps), steps
 
-        project_id = task.project_id
+        project_id = target()
+
+        # Same order the system prompt asks for: read the type spec before touching
+        # anything. Without this, "检查规范然后启动预览" would only do the second half.
+        if wants_convention and project_id:
+            call("按项目类型体检，确认目录、命令与契约", "check_project_conventions", project_id=project_id)
+
+        if wants_revert:
+            if project_id:
+                history = call("读取提交历史以定位回滚点", "git_log", project_id=project_id, limit=10) or []
+                if history:
+                    call("回退最近一次提交（生成新提交）", "git_revert_commit", project_id=project_id, sha=history[0]["sha"])
+                    if wants_publish:
+                        call("发布回滚后的版本", "publish_project", project_id=project_id, message="回滚发布")
+            return render_report(prompt, steps), steps
+
+        if wants_discard:
+            if project_id:
+                state = call("读取工作区改动", "git_status", project_id=project_id) or {}
+                for item in (state.get("files") or [])[:20]:
+                    call(f"还原 {item['path']}", "git_restore_file", project_id=project_id, path=item["path"])
+            return render_report(prompt, steps), steps
+
+        if wants_publish:
+            if project_id:
+                call("提交并发布当前工作区", "publish_project", project_id=project_id, message=prompt[:80])
+                call("确认部署状态", "deployment_status", project_id=project_id)
+            return render_report(prompt, steps), steps
+
+        if wants_preview:
+            if project_id:
+                call("启动或重启预览环境", "start_preview", project_id=project_id)
+                call("读取预览状态与日志尾部", "preview_status", project_id=project_id)
+            return render_report(prompt, steps), steps
 
         if wants_deploy:
-            if project_id is None:
-                projects = call("需要确定目标项目，先列出工作台项目", "list_projects") or []
-                project_id = projects[0]["id"] if projects else None
             if project_id:
-                call("触发部署", "deploy_project", project_id=project_id)
+                call("触发生产部署", "deploy_project", project_id=project_id)
                 call("读取部署日志尾部", "deployment_status", project_id=project_id)
             return render_report(prompt, steps), steps
 
+        if wants_git:
+            if project_id:
+                call("读取工作区状态", "git_status", project_id=project_id)
+                call("读取提交历史", "git_log", project_id=project_id, limit=10)
+            return render_report(prompt, steps), steps
+
+        if wants_convention:
+            # the check itself already ran above when a project was resolved
+            if not project_id:
+                call("读取工作台约定与工具面", "describe_workbench")
+            return render_report(prompt, steps), steps
+
+        if wants_run:
+            if project_id:
+                call("按约定运行项目", "run_project", project_id=project_id)
+                call("读取运行状态", "deployment_status", project_id=project_id)
+            return render_report(prompt, steps), steps
+
         if wants_status:
-            if project_id is None:
-                projects = call("列出项目以定位目标", "list_projects") or []
-                project_id = projects[0]["id"] if projects else None
             if project_id:
                 call("读取最新部署与日志", "deployment_status", project_id=project_id)
+                call("读取预览状态", "preview_status", project_id=project_id)
                 call("读取项目资源清单", "get_project", project_id=project_id)
             return render_report(prompt, steps), steps
 
@@ -356,7 +444,7 @@ class LocalHarness(Harness):
         # default: a read-only sweep so the answer is grounded
         if project_id:
             call("读取目标项目", "get_project", project_id=project_id)
-            call("读取部署状态", "deployment_status", project_id=project_id)
+            call("按类型体检", "check_project_conventions", project_id=project_id)
             call("读取文件清单", "list_project_files", project_id=project_id, limit=40)
         else:
             call("读取工作台项目概览", "list_projects")
@@ -436,8 +524,15 @@ def run(agent_key: str, prompt: str, project_id: str | None = None) -> dict[str,
                     "list_projects",
                     "get_project",
                     "deployment_status",
+                    "preview_status",
                     "list_project_files",
                     "read_project_file",
+                    "search_project",
+                    "git_status",
+                    "git_log",
+                    "git_diff",
+                    "check_project_conventions",
+                    "list_env_vars",
                     "list_agents",
                     "query_database",
                 }

@@ -9,9 +9,18 @@ import { api } from "@/lib/api";
 import { DEPLOY_STATUS, PROJECT_STATUS, TYPE_ICON, TYPE_LABEL, cx } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import type { Deployment, EnvVar, Project } from "@/lib/types";
-import { DataTab, DeployTab, IdeTab, OverviewTab, SettingsTab } from "./tabs";
+import { DataTab, DeployTab, OverviewTab, SettingsTab } from "./tabs";
+import { CodeTab, ConventionsTab, PreviewTab, VersionTab } from "./workspace";
 
-type TabKey = "overview" | "ide" | "deploy" | "data" | "settings";
+type TabKey =
+  | "overview"
+  | "code"
+  | "preview"
+  | "version"
+  | "deploy"
+  | "data"
+  | "conventions"
+  | "settings";
 
 const ACTIVE = new Set(["queued", "building", "deploying"]);
 
@@ -100,9 +109,12 @@ export default function ProjectDetailPage() {
   const tabs = useMemo(
     () => [
       { key: "overview" as const, label: t("detail.tabOverview") },
-      { key: "ide" as const, label: t("detail.tabIde") },
+      { key: "code" as const, label: t("detail.tabCode") },
+      { key: "preview" as const, label: t("detail.tabPreview") },
+      { key: "version" as const, label: t("detail.tabVersion") },
       { key: "deploy" as const, label: t("detail.tabDeploy"), count: deployments.length },
       { key: "data" as const, label: t("detail.tabData") },
+      { key: "conventions" as const, label: t("detail.tabConventions") },
       { key: "settings" as const, label: t("detail.tabSettings") },
     ],
     [deployments.length, t],
@@ -191,7 +203,9 @@ export default function ProjectDetailPage() {
           busy={busy}
         />
       ) : null}
-      {tab === "ide" ? <IdeTab project={project} ide={ide} /> : null}
+      {tab === "code" ? <CodeTab project={project} ide={ide} /> : null}
+      {tab === "preview" ? <PreviewTab project={project} onChanged={load} /> : null}
+      {tab === "version" ? <VersionTab project={project} onChanged={load} /> : null}
       {tab === "deploy" ? (
         <DeployTab
           project={project}
@@ -202,6 +216,7 @@ export default function ProjectDetailPage() {
         />
       ) : null}
       {tab === "data" ? <DataTab project={project} /> : null}
+      {tab === "conventions" ? <ConventionsTab project={project} /> : null}
       {tab === "settings" ? (
         <SettingsTab
           project={project}

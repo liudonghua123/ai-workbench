@@ -65,6 +65,11 @@ class DeploySpec:
     environment: str = "production"
     url: str = ""
     env: dict[str, str] = field(default_factory=dict)
+    # optional pre-step; a failure here is a failed deployment, never a silent skip
+    build_command: str = ""
+    project_name: str = ""
+    project_type: str = "fullstack"
+    health_path: str = "/"
 
 
 @dataclass(slots=True)

@@ -21,6 +21,15 @@ logger = logging.getLogger("workbench.migrate")
 COLUMNS: dict[str, dict[str, str]] = {
     "projects": {
         "owner_id": "VARCHAR DEFAULT ''",
+        "build_command": "VARCHAR DEFAULT ''",
+        "dev_command": "VARCHAR DEFAULT ''",
+        "dev_port": "INTEGER",
+        "preview_fqdn": "VARCHAR DEFAULT ''",
+        "preview_url": "VARCHAR DEFAULT ''",
+        "health_path": "VARCHAR DEFAULT '/'",
+    },
+    "deployments": {
+        "commit_sha": "VARCHAR DEFAULT ''",
     },
 }
 
