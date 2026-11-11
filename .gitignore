@@ -1,0 +1,35 @@
+# --- runtime data (generated projects, buckets, sqlite dbs, dns zone) ---
+data/
+
+# --- python ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- node ---
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# --- env / secrets ---
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- editors / os ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# --- logs ---
+*.log
+npm-debug.log*

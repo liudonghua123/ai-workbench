@@ -1,0 +1,206 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { Icon } from "@/components/Icon";
+import { CopyButton, Empty, Pill, Skeleton, StatusPill, Tabs, useToast } from "@/components/ui";
+import { api } from "@/lib/api";
+import { DEPLOY_STATUS, PROJECT_STATUS, TYPE_ICON, TYPE_LABEL, cx } from "@/lib/format";
+import type { Deployment, EnvVar, Project } from "@/lib/types";
+import { DataTab, DeployTab, IdeTab, OverviewTab, SettingsTab } from "./tabs";
+
+type TabKey = "overview" | "ide" | "deploy" | "data" | "settings";
+
+const ACTIVE = new Set(["queued", "building", "deploying"]);
+
+export default function ProjectDetailPage() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const { push } = useToast();
+  const projectId = params?.id as string;
+
+  const [project, setProject] = useState<Project | null>(null);
+  const [env, setEnv] = useState<EnvVar[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [ide, setIde] = useState<{ vscode_url: string; available: boolean; repo_path: string; note: string } | null>(null);
+  const [tab, setTab] = useState<TabKey>("overview");
+  const [error, setError] = useState("");
+  const [deploying, setDeploying] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [proj, envs, deps] = await Promise.all([
+        api.project(projectId),
+        api.env(projectId),
+        api.deployments(projectId),
+      ]);
+      setProject(proj);
+      setEnv(envs);
+      setDeployments(deps);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载失败");
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    api.ide(projectId).then(setIde).catch(() => undefined);
+  }, [projectId]);
+
+  const latest = deployments[0] ?? project?.deployment ?? null;
+  const busy = latest ? ACTIVE.has(latest.status) : false;
+
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setInterval(async () => {
+      const deps = await api.deployments(projectId).catch(() => null);
+      if (deps) setDeployments(deps);
+    }, 1400);
+    return () => clearInterval(timer);
+  }, [busy, projectId]);
+
+  const deploy = async () => {
+    setDeploying(true);
+    try {
+      const dep = await api.deploy(projectId);
+      push(`已提交部署 ${dep.version}`);
+      setTab("deploy");
+      await load();
+    } catch (err) {
+      push(err instanceof Error ? err.message : "部署失败", "err");
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!project) return;
+    if (!window.confirm(`删除项目「${project.name}」？工作区文件、对象存储与数据库都会一并清理。`)) return;
+    try {
+      await api.deleteProject(project.id);
+      push("项目已删除");
+      router.push("/projects");
+    } catch (err) {
+      push(err instanceof Error ? err.message : "删除失败", "err");
+    }
+  };
+
+  const tabs = useMemo(
+    () => [
+      { key: "overview" as const, label: "概览" },
+      { key: "ide" as const, label: "代码 / IDE" },
+      { key: "deploy" as const, label: "部署", count: deployments.length },
+      { key: "data" as const, label: "数据" },
+      { key: "settings" as const, label: "设置" },
+    ],
+    [deployments.length],
+  );
+
+  if (error) {
+    return (
+      <main className="content">
+        <div className="card">
+          <Empty
+            icon="close"
+            title="无法加载项目"
+            hint={error}
+            action={
+              <Link href="/projects" className="btn btn-sm">
+                返回项目列表
+              </Link>
+            }
+          />
+        </div>
+      </main>
+    );
+  }
+
+  if (!project) {
+    return (
+      <main className="content">
+        <div className="stack">
+          <Skeleton height={40} width={320} />
+          <Skeleton height={120} radius={13} />
+          <Skeleton height={320} radius={13} />
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="content">
+      <div className="page-head" style={{ alignItems: "flex-start" }}>
+        <span className="project-glyph" style={{ width: 40, height: 40, borderRadius: 11 }}>
+          <Icon name={TYPE_ICON[project.type] ?? "layers"} size={19} />
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <h1 className="page-title" style={{ fontSize: 22 }}>
+              {project.name}
+            </h1>
+            <StatusPill map={PROJECT_STATUS} value={project.status} />
+            {latest ? <StatusPill map={DEPLOY_STATUS} value={latest.status} /> : null}
+          </div>
+          <p className="page-desc" style={{ marginTop: 4 }}>
+            {project.description || "暂无描述"}
+          </p>
+          <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+            <span className="tag">{TYPE_LABEL[project.type] ?? project.type}</span>
+            <span className="tag">{project.template_key}</span>
+            <span className="tag">:{project.port}</span>
+            {project.git_initialized ? <span className="tag">git</span> : null}
+          </div>
+        </div>
+        <div className="spacer" />
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <a
+            className="btn"
+            href={project.url}
+            target="_blank"
+            rel="noreferrer"
+            title={project.url}
+          >
+            <Icon name="external" size={13} /> 打开应用
+          </a>
+          <span style={{ display: "inline-flex" }}>
+            <CopyButton value={project.url} label="复制访问地址" />
+          </span>
+          <button className="btn btn-accent" onClick={deploy} disabled={deploying || busy}>
+            <Icon name={busy ? "refresh" : "rocket"} size={13} />
+            {busy ? "部署进行中" : deploying ? "提交中…" : "部署"}
+          </button>
+        </div>
+      </div>
+
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+
+      {tab === "overview" ? (
+        <OverviewTab project={project} deployments={deployments} env={env} onDeploy={deploy} busy={busy} />
+      ) : null}
+      {tab === "ide" ? <IdeTab project={project} ide={ide} /> : null}
+      {tab === "deploy" ? (
+        <DeployTab
+          project={project}
+          deployments={deployments}
+          onRefresh={load}
+          onDeploy={deploy}
+          busy={busy}
+        />
+      ) : null}
+      {tab === "data" ? <DataTab project={project} /> : null}
+      {tab === "settings" ? (
+        <SettingsTab project={project} env={env} onEnvChange={setEnv} onDelete={remove} onRefresh={load} />
+      ) : null}
+
+      <div className={cx("row", "muted")} style={{ marginTop: 20, gap: 6, fontSize: 11.5 }}>
+        <Icon name="folder" size={12} />
+        <span className="mono">{project.repo_path}</span>
+      </div>
+    </main>
+  );
+}
