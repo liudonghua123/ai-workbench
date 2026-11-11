@@ -223,13 +223,16 @@ def publish_project(project_id: str, message: str = "") -> dict[str, Any]:
         project = scaffold.get_project(session, project_id)
         result = deploy_service.publish(session, project, message)
         deployment_id = result["deployment"].id
+        # "nothing to commit" still deploys HEAD, so read the sha from either shape
+        commit = result["commit"] if isinstance(result["commit"], dict) else {}
+        head = commit.get("head") if isinstance(commit.get("head"), dict) else {}
         payload = {
             "project_id": project.id,
             "version": result["version"],
             "commit": {
-                "committed": result["commit"].get("committed", False),
-                "sha": result["commit"].get("sha", ""),
-                "short": result["commit"].get("short", ""),
+                "committed": commit.get("committed", False),
+                "sha": commit.get("sha", "") or head.get("sha", ""),
+                "short": commit.get("short", "") or head.get("short", ""),
             },
             "tag": result["tag"].get("tag", ""),
             "deployment_id": deployment_id,
