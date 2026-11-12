@@ -426,6 +426,49 @@ const run = async () => {
     await ctx.close();
   }
 
+  // ---------------------------------------------------------------- gateway
+  {
+    // These two are not Next pages: :80 is the reverse proxy. If it is not running
+    // the shots are skipped with a note rather than capturing a connection error.
+    const up = await fetch("http://localhost/__gateway/health")
+      .then((res) => res.ok)
+      .catch(() => false);
+    if (!up) {
+      problems.push("gateway not listening on :80 — gateway screenshots skipped");
+    } else {
+      const { ctx, page } = await context(browser, { token });
+
+      await page.goto("http://localhost/__gateway/", { waitUntil: "networkidle" });
+      await shot(page, "45-gateway", "gateway: every host it routes");
+
+      // A project whose production port nothing listens on: the gateway's own page,
+      // not a bare 502. In simulate mode that is every project, so it is stable —
+      // and the 502 itself is the subject, so its console error is not a problem.
+      quiet = true;
+      await page.goto("http://customer-success.localtest.me/", { waitUntil: "networkidle" })
+        .catch(() => undefined);
+      await shot(page, "46-gateway-down", "a stopped project explains itself");
+      quiet = false;
+
+      // a tight crop of the address strip: the two URLs are the whole point
+      await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "domcontentloaded" });
+      await page.locator(".addr-row").waitFor({ timeout: 15_000 })
+        .catch(() => problems.push("address strip missing on the project page"));
+      await page.waitForTimeout(500);
+      const head = await page.locator(".page-head").boundingBox().catch(() => null);
+      if (head) {
+        await page.screenshot({
+          path: `${OUT}47-project-addresses.png`,
+          clip: { x: head.x - 8, y: head.y - 8, width: head.width + 16, height: head.height + 16 },
+        });
+        steps.push("  ✓ 47-project-addresses     two hosts, no ports");
+      } else {
+        problems.push("could not crop the address strip");
+      }
+      await ctx.close();
+    }
+  }
+
   // ------------------------------------------------------------- signed out
   {
     // the 401s here are the point of the capture

@@ -84,7 +84,10 @@ def build_context(
     fqdn = f"{slug}.{settings.domain_suffix}"
     preview_fqdn = f"{slug}{suffix}.{settings.domain_suffix}"
     db_name = slug.replace("-", "_")
-    base = settings.domain_base_url
+    # one helper, so a scaffolded README can never advertise a different address
+    # than the one the control plane links to
+    public_url = conventions.origin_for(fqdn, port)
+    public_preview = conventions.origin_for(preview_fqdn, dev_port)
     ctx = {
         "project_name": spec.name,
         "slug": slug,
@@ -92,10 +95,10 @@ def build_context(
         "port": str(port),
         "dev_port": str(dev_port),
         "fqdn": fqdn,
-        "fqdn_url": f"http://{fqdn}:{port}" if not base else base,
+        "fqdn_url": public_url,
         "preview_fqdn": preview_fqdn,
-        "preview_url": f"http://{preview_fqdn}:{dev_port}" if not base else base,
-        "api_base": f"http://{fqdn}:{port}" if not base else base,
+        "preview_url": public_preview,
+        "api_base": public_url,
         "storage_bucket": f"{slug}-assets",
         "db_name": db_name,
         "db_dsn": f"sqlite:///./data/{db_name}.db",

@@ -73,9 +73,24 @@ export function OverviewTab({
                 {
                   k: t("ov.url"),
                   v: (
-                    <a className="link" href={project.url} target="_blank" rel="noreferrer">
+                    <a className="link mono" href={project.url} target="_blank" rel="noreferrer">
                       {project.url}
                     </a>
+                  ),
+                },
+                {
+                  k: t("ov.previewUrl"),
+                  v: project.preview.url ? (
+                    <a
+                      className="link mono"
+                      href={project.preview.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {project.preview.url}
+                    </a>
+                  ) : (
+                    "—"
                   ),
                 },
                 { k: t("ov.port"), v: String(project.port ?? "—") },

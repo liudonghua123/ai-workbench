@@ -6,7 +6,7 @@ import { CopyButton, Pill, Skeleton, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { clearToken, getToken, setToken } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
-import type { HarnessReport, LlmStatus, LlmTest, Me, Settings } from "@/lib/types";
+import type { GatewayStatus, HarnessReport, LlmStatus, LlmTest, Me, Settings } from "@/lib/types";
 
 export default function SettingsPage() {
   const { t } = useI18n();
@@ -22,6 +22,7 @@ export default function SettingsPage() {
   const [token, setTokenValue] = useState("");
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<LlmTest | null>(null);
+  const [gateway, setGateway] = useState<GatewayStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -39,6 +40,13 @@ export default function SettingsPage() {
         setMe(await api.me());
       } catch {
         setMe(null);
+      }
+      // The routing table is behind system:read; an anonymous visitor still gets
+      // the rest of this page, so a failure here must not blank it out.
+      try {
+        setGateway(await api.gateway());
+      } catch {
+        setGateway(null);
       }
     } catch (err) {
       push(err instanceof Error ? err.message : "failed", "err");
@@ -283,9 +291,94 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+        {/* ---------------------------------------------------------- gateway */}
+        <section className="card">
+          <div className="card-head">
+            <Icon name="route" size={14} />
+            <span className="card-title">{t("sys.gateway")}</span>
+            <div className="spacer" />
+            {gateway ? (
+              <Pill tone={gateway.listening ? "ok" : "warn"}>
+                {gateway.listening ? t("sys.gatewayUp") : t("sys.gatewayDown")}
+              </Pill>
+            ) : (
+              <Pill tone="idle">{t("sys.gatewayOff")}</Pill>
+            )}
+          </div>
+          <div className="card-body" style={{ paddingTop: 4 }}>
+            <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.65, marginBottom: 10 }}>
+              {t("sys.gatewayHint")}
+            </div>
+            {gateway ? (
+              <>
+                <div className="row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                  <span className="tag mono">
+                    {gateway.scheme}://{gateway.bind_host}:{gateway.port}
+                  </span>
+                  <span className="tag mono">*{settings.gateway.preview_suffix}.{settings.domain_suffix}</span>
+                  <span className="tag">
+                    {gateway.counts.total === gateway.counts.all
+                      ? t("sys.gatewayRoutes", { n: gateway.counts.total })
+                      : t("sys.gatewayRoutesAll", {
+                          n: gateway.counts.total,
+                          all: gateway.counts.all,
+                        })}
+                  </span>
+                  <span className="tag">{t("sys.gatewayLive", { n: gateway.counts.reachable })}</span>
+                </div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>{t("sys.gatewayHost")}</th>
+                        <th>{t("sys.gatewayEnv")}</th>
+                        <th>{t("sys.gatewayUpstream")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {gateway.routes.slice(0, 8).map((route) => (
+                        <tr key={route.host}>
+                          <td className="mono" style={{ fontSize: 11 }}>
+                            <a className="link" href={route.url} target="_blank" rel="noreferrer">
+                              {route.host}
+                            </a>
+                          </td>
+                          <td>
+                            <span className={`pill ${route.environment === "preview" ? "pill-warn" : ""}`}>
+                              {route.environment}
+                            </span>
+                          </td>
+                          <td className="muted mono" style={{ fontSize: 11 }}>
+                            <span
+                              className="event-dot"
+                              style={{
+                                display: "inline-block",
+                                marginRight: 6,
+                                background: route.reachable ? "var(--ok)" : "var(--ink-4)",
+                              }}
+                            />
+                            {route.upstream.replace(/^http:\/\//, "")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {gateway.routes.length > 8 ? (
+                  <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+                    +{gateway.routes.length - 8}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="muted" style={{ fontSize: 12 }}>
+                {t("sys.gatewayUnknown")}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
 
-      {/* ------------------------------------------------------------ env */}
       <section className="card card-pad" style={{ marginTop: 16 }}>
         <div className="row" style={{ gap: 8, marginBottom: 12 }}>
           <Icon name="settings" size={14} />

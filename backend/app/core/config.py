@@ -35,11 +35,31 @@ class Settings(BaseSettings):
     # --- domains -------------------------------------------------------
     # localtest.me / nip.io / sslip.io all resolve *.wildcard -> 127.0.0.1
     domain_suffix: str = "localtest.me"
-    domain_base_url: str = ""  # e.g. https://gateway.example.com; empty -> http://<fqdn>:<port>
+    domain_base_url: str = ""  # e.g. https://gateway.example.com; empty -> the built-in gateway
     # debug/preview traffic goes to <slug><preview_suffix>.<domain_suffix>
     preview_suffix: str = "-dev"
     port_range_start: int = 4200
     port_range_end: int = 4399
+
+    # --- gateway (built-in reverse proxy) ------------------------------
+    # Projects are reached by Host, not by port: <slug>.<domain_suffix> for
+    # production and <slug><preview_suffix>.<domain_suffix> for preview. Both
+    # hosts are the *same* listener, which is what makes the URL port-free.
+    gateway_enabled: bool = True
+    gateway_bind_host: str = "0.0.0.0"
+    gateway_http_port: int = 80
+    gateway_https_port: int = 443
+    gateway_tls_cert: str = ""
+    gateway_tls_key: str = ""
+    # upstreams are always loopback: the gateway never becomes an open proxy
+    gateway_upstream_host: str = "127.0.0.1"
+    # how long a Host -> upstream lookup is cached before the DB is re-read
+    gateway_route_ttl: float = 2.0
+    # request bodies up to this size are buffered so the upstream receives a
+    # Content-Length instead of chunked input (WSGI apps cannot read chunked)
+    gateway_body_buffer: int = 1_048_576
+    # "http" / "https"; empty -> https when a certificate is configured
+    gateway_public_scheme: str = ""
 
     # --- provider selection (swap a string, get a different cloud) -------
     storage_provider: str = "local"
@@ -121,6 +141,26 @@ class Settings(BaseSettings):
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"
+
+    @property
+    def gateway_scheme(self) -> str:
+        """Scheme published URLs use when the built-in gateway serves them."""
+        if self.gateway_public_scheme:
+            return self.gateway_public_scheme
+        return "https" if (self.gateway_tls_cert and self.gateway_tls_key) else "http"
+
+    @property
+    def gateway_port(self) -> int:
+        return self.gateway_https_port if self.gateway_scheme == "https" else self.gateway_http_port
+
+    @property
+    def gateway_active(self) -> bool:
+        """True when published URLs should be host-only (no port, no per-app socket).
+
+        An explicit ``WB_DOMAIN_BASE_URL`` wins: that means an *external* proxy or
+        tunnel terminates traffic and the built-in gateway is not in the path.
+        """
+        return self.gateway_enabled and not self.domain_base_url
 
     @property
     def storage_dir(self) -> Path:

@@ -175,13 +175,25 @@ export default function ProjectDetailPage() {
           <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
             <span className="tag">{typeKey ? t(typeKey) : project.type}</span>
             <span className="tag">{project.template_key}</span>
-            <span className="tag">:{project.port}</span>
             {project.git_initialized ? <span className="tag">git</span> : null}
             {project.owner_name ? (
               <span className="tag" title={t("proj.owner")}>
                 <Icon name="user" size={10} /> {project.owner_name}
               </span>
             ) : null}
+          </div>
+          <div className="addr-row">
+            <Address
+              label={t("detail.prodUrl")}
+              url={project.url}
+              note={isPortFree(project.url) ? t("detail.portFree") : ""}
+            />
+            <Address
+              label={t("detail.previewUrl")}
+              url={project.preview.url}
+              note={project.preview.status === "running" ? "" : t("detail.previewStopped")}
+              muted={project.preview.status !== "running"}
+            />
           </div>
         </div>
         <div className="spacer" />
@@ -241,5 +253,53 @@ export default function ProjectDetailPage() {
         <span className="mono">{project.repo_path}</span>
       </div>
     </main>
+  );
+}
+
+/* --------------------------------------------------------------------------
+   Address strip — the two URLs the platform hands out for a project. They are
+   shown as bare hosts on purpose: with the built-in gateway there is no port to
+   read, and seeing the same host twice (differing only by suffix) is what makes
+   "preview vs production" obvious at a glance.
+   -------------------------------------------------------------------------- */
+
+function isPortFree(url: string): boolean {
+  try {
+    return !new URL(url).port;
+  } catch {
+    return false;
+  }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function Address({
+  label,
+  url,
+  note,
+  muted,
+}: {
+  label: string;
+  url: string;
+  note?: string;
+  muted?: boolean;
+}) {
+  const { t } = useI18n();
+  if (!url) return null;
+  return (
+    <span className={cx("addr", muted && "is-muted")} title={url}>
+      <span className="addr-label">{label}</span>
+      <a className="addr-host mono" href={url} target="_blank" rel="noreferrer">
+        {hostOf(url)}
+      </a>
+      {note ? <span className="addr-note">{note}</span> : null}
+      <CopyButton value={url} label={t("common.copyUrl")} />
+    </span>
   );
 }

@@ -331,6 +331,53 @@ export interface Settings {
   auth_enabled: boolean;
   sql: SqlMode;
   providers: { storage: string; database: string; domain: string; deploy: string };
+  gateway: GatewayConfig;
+}
+
+/** How published apps are addressed: one listener, routed by Host. */
+export interface GatewayConfig {
+  enabled: boolean;
+  active: boolean;
+  scheme: string;
+  port: number;
+  bind_host: string;
+  upstream_host: string;
+  preview_suffix: string;
+  route_ttl: number;
+}
+
+export interface GatewayRoute {
+  host: string;
+  url: string;
+  project_id: string;
+  slug: string;
+  name: string;
+  environment: "production" | "preview";
+  upstream: string;
+  custom: boolean;
+  reachable: boolean;
+}
+
+export interface GatewayStatus {
+  enabled: boolean;
+  active: boolean;
+  listening: boolean;
+  scheme: string;
+  port: number;
+  bind_host: string;
+  upstream_host: string;
+  domain_suffix: string;
+  preview_suffix: string;
+  status_page: string;
+  routes: GatewayRoute[];
+  counts: {
+    total: number;
+    /** every route the listener serves, across tenants */
+    all: number;
+    production: number;
+    preview: number;
+    reachable: number;
+  };
 }
 
 export interface SqlMode {

@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -248,16 +249,70 @@ def production_fqdn(project: Project) -> str:
     return f"{project.slug}.{settings.domain_suffix}"
 
 
-def production_url(project: Project, port: int | None = None) -> str:
+def origin_for(fqdn: str, port: int, *, via_gateway: bool | None = None) -> str:
+    """Public origin for a host.
+
+    Three deployment shapes, one function:
+
+    * external proxy/tunnel declared — its base URL wins, whatever the ports are;
+    * built-in gateway — ``scheme://fqdn`` and the port disappears, because the
+      gateway multiplexes every project on one listener and routes by Host;
+    * no gateway — ``http://fqdn:port``, the honest *direct* address.
+
+    A non-default gateway port is spelled out rather than hidden: emitting a
+    port-free URL for a listener that is not on 80/443 would be a broken link.
+    """
     if settings.domain_base_url:
-        return settings.domain_base_url
-    return f"http://{production_fqdn(project)}:{port or project.port or 0}"
+        return settings.domain_base_url.rstrip("/")
+    if via_gateway is None:
+        via_gateway = settings.gateway_active
+    if via_gateway:
+        scheme = settings.gateway_scheme
+        gateway_port = settings.gateway_port
+        default = 443 if scheme == "https" else 80
+        return f"{scheme}://{fqdn}" if gateway_port == default else f"{scheme}://{fqdn}:{gateway_port}"
+    return f"http://{fqdn}:{port or 0}"
+
+
+def production_url(project: Project, port: int | None = None) -> str:
+    return origin_for(production_fqdn(project), port or project.port or 0)
 
 
 def preview_url(project: Project, port: int | None) -> str:
-    if settings.domain_base_url:
-        return settings.domain_base_url
-    return f"http://{preview_fqdn(project)}:{port or 0}"
+    return origin_for(preview_fqdn(project), port or 0)
+
+
+def owns_host(url: str) -> bool:
+    """True when a URL points at a host the platform itself allocated."""
+    if not url:
+        return False
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == settings.domain_suffix or host.endswith("." + settings.domain_suffix)
+
+
+def normalize_endpoints(project: Project) -> bool:
+    """Re-derive stored public URLs from the current addressing shape.
+
+    A URL is a *stored artifact* here — deployment rows point at it and the UI
+    links to it — so flipping the platform between "a port per project" and "one
+    gateway listener" would otherwise leave every existing project advertising an
+    address that no longer answers. Custom domains are never touched: only hosts
+    we handed out ourselves are rewritten.
+    """
+    changed = False
+    expected_preview = preview_url(project, project.dev_port)
+    if project.preview_url != expected_preview:
+        project.preview_url = expected_preview
+        changed = True
+    if not project.primary_url or owns_host(project.primary_url):
+        expected_production = production_url(project, project.port)
+        if project.primary_url != expected_production:
+            project.primary_url = expected_production
+            changed = True
+    return changed
 
 
 # ---------------------------------------------------------------------------

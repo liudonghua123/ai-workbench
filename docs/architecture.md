@@ -856,7 +856,89 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 
 ---
 
-## 13. 扩展点总览
+## 13. 内置反向代理：一个监听，按 Host 分流
+
+### 13.1 为什么不是一个端口一个网址
+
+每个项目都会分到端口（`4200–4399`），因为进程就是按端口起的。但端口不该出现在
+用户看到的地址里：它既没法发给别人，也让"预览"和"生产"看起来像两个不同的东西。
+于是地址被拆成两件事：
+
+| 谁决定 | 什么 |
+| --- | --- |
+| `projects` 表 | 项目占哪个端口、生产域名、预览域名 |
+| 网关 | 这两个域名都指向同一个监听（`:80`/`:443`），按 `Host` 转发 |
+
+```python
+# conventions.py —— 三种寻址形态，一个函数
+def origin_for(fqdn, port, *, via_gateway=None):
+    if settings.domain_base_url:          # 已有外部反代/隧道
+        return settings.domain_base_url
+    if via_gateway:                        # 内置网关：端口消失
+        scheme, gport = settings.gateway_scheme, settings.gateway_port
+        default = 443 if scheme == "https" else 80
+        return f"{scheme}://{fqdn}" if gport == default else f"{scheme}://{fqdn}:{gport}"
+    return f"http://{fqdn}:{port}"         # 没网关：老实写端口
+```
+
+`gport != 默认端口` 时依然把端口写出来——给一个真正的 `:8080` 监听发无端口网址，
+只会得到一个连不上的链接。
+
+### 13.2 路由表从哪来
+
+网关是**独立进程**（`python -m app.gateway`），因为它要在控制面重启时继续服务，
+而且整套栈里只有它需要特权端口。它不订阅事件、不共享内存，只有一个带 TTL
+（默认 2s）的缓存：
+
+```python
+def _load(self) -> dict[str, Route]:
+    with Session(engine) as session:
+        projects = session.exec(select(Project)).all()
+        bindings = session.exec(select(DomainBinding)).all()
+    # <slug>.<suffix>       -> project.port       (production)
+    # <preview_fqdn>        -> project.dev_port   (preview)
+    # 自定义 DomainBinding  -> 生产端口（除非它就是预览域名）
+```
+
+`Route` 只可能指向 `WB_GATEWAY_UPSTREAM_HOST`（默认 `127.0.0.1`）上的**项目行里
+的端口**。没有任何路径能让请求头影响上游地址——这是"自建反代"最容易变成
+"开放代理 / SSRF 跳板"的地方，所以这一层不做任何用户输入拼接。
+
+### 13.3 三个容易写错的细节
+
+| 细节 | 做法 | 不这么做会怎样 |
+| --- | --- | --- |
+| 上游的 `Host` | 改成 `localhost:<port>`，真实域名放 `X-Forwarded-Host` | Vite 6 会直接 `403 Blocked request`，Next 会告警；现象像鉴权 bug |
+| 请求体 | ≤1MiB 先缓冲，附 `Content-Length`；更大才流式 | WSGI 栈读不了 chunked 请求体，表单提交"永远是空的" |
+| 响应 | `aiter_raw()` 逐块转发，不缓冲 | SSE 与日志尾随全部失效，等首字节等到超时 |
+
+另外：`Location` 指向上游自身 origin 时改写为公开域名（否则浏览器会跳到
+`localhost:4200`，外面根本连不上）；WebSocket 升级按帧双向转发（HMR 靠它），
+只带 `cookie/authorization/origin/user-agent`，握手头由 websockets 客户端重新生成
+（转发 `Sec-WebSocket-Key` 会因重复头拿到 400）。
+
+### 13.4 失败页是产品的一部分
+
+项目没在运行时，上游端口不会应答。这时网关自己出页面——项目名、环境、上游端口、
+一句"点部署/启动预览"，而不是裸 `502`。状态页在 `http://localhost:80/__gateway/`，
+列出全部路由与上游。这两个页面不读任何用户数据，也不转发到项目。
+
+### 13.5 寻址形态变了，旧行怎么办
+
+URL 是**存下来的**（部署行指着它）。把网关打开，历史项目还挂着带端口的旧地址，
+所以 `seed._heal_endpoints()` 每次启动重算一遍：
+
+```python
+def normalize_endpoints(project) -> bool:
+    # 预览地址永远按当前形态推导
+    # 生产地址只在「空」或「本来就是我们自己发的域名」时才改写，自定义域名不动
+```
+
+`owns_host()` 用域名后缀判断归属，所以绑过自定义域名的项目不会被"治愈"掉。
+
+---
+
+## 14. 扩展点总览
 
 | 想做的事 | 动哪里 | 要不要改前端 |
 | --- | --- | --- |
@@ -881,7 +963,7 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 
 ---
 
-## 14. 已知限制与下一步
+## 15. 已知限制与下一步
 
 | 限制 | 现状 | 建议 |
 | --- | --- | --- |
@@ -898,11 +980,13 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 | 编辑器无多文件搜索替换 | 仅有编辑器内的查找交互与 `search_project` 接口 | 在 Code 标签页左侧搜索面板接 `search_project` 结果 |
 | 发布不推送远端 | `git tag deploy/v<N>` 只在本地 | 接 `git push --tags` 或改成调用远端 CI |
 | 端口分配非原子 | 单进程内顺序分配 | 多副本部署时改用数据库唯一约束 + 重试 |
+| 网关是单进程 | 一个 uvicorn，按 Host 路由，路由表 2 秒缓存 | 多副本时每份都读同一个库，路由天然一致；连接池各自独立。要水平扩展就用 nginx / Caddy 前置，`WB_DOMAIN_BASE_URL` 已预留 |
+| 网关只做 HTTP/1.1 | uvicorn 单协议，不自带 ACME | 公网场景交给 Caddy / cloudflared 终止 TLS；`WB_GATEWAY_TLS_CERT/KEY` 只接受已有证书 |
 | 语言首屏翻转 | 默认 en，hydration 后切到存储的 zh | 改读 cookie 让 SSR 直接出正确语言 |
 
 ---
 
-## 15. 目录速查
+## 16. 目录速查
 
 ```
 backend/
@@ -923,7 +1007,10 @@ backend/
                          local/static_host(无依赖也能托管的预览宿主)
                          auth/{base,cas,oauth2(OIDC),wecom,dingtalk}
     mcp/server.py        fastmcp 服务端，与 REST 同端口
+    gateway/             内置反向代理（独立进程：python -m app.gateway）
+                         routes(Host→上游路由表) / proxy(HTTP+WS 转发) / pages(失败页)
   tools/                 mock_llm(假模型端点) / auth_smoke(41 条判权断言)
+                         gateway_smoke(21 条反代断言，含 WS 与流式)
                          access_demo(用公开 API 造一个像样的组织)
 frontend/
   app/                   13 个路由（含 /projects/[id] 八标签页、/access、/login）

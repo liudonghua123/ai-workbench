@@ -24,6 +24,7 @@ AI 工作台就是这套接口。你可视化创建项目，平台按约定自�
 | **四套模板、四种形态** | 全栈（FastAPI + Next.js）、纯前端（Vite + React）、纯后端（FastAPI + MCP）、Agent 服务（FastAPI + MCP + Harness） |
 | **项目内可视化改代码** | 文件树 + 语法高亮编辑器，零额外依赖；写盘走的就是 Agent 用的 `write_project_file` |
 | **真正的调试环境** | 每个项目独占 `<slug>-dev.<后缀>`：自己的端口、自己的进程、热更新；面板内直接内嵌运行结果 |
+| **发布出来是不带端口的网址** | 内置反向代理（一个四百行的 nginx）按 Host 把 `<slug>.<后缀>` 与 `<slug>-dev.<后缀>` 转到项目端口，支持流式响应与 WebSocket 升级 —— `http://my-app.localtest.me` 就是能直接发给别人的地址 |
 | **界面里的版本控制** | 暂存、看 diff、提交、还原单文件、回滚提交 —— git 是事实来源，不是附加功能 |
 | **发布 = 提交 → 打标签 → 部署** | 发布时打 `deploy/v<N>` 标签并部署那个 sha，「线上是哪一版」是可指向的 git 对象 |
 | **一键部署** | 带版本号、流式构建日志与健康检查 |
@@ -55,11 +56,15 @@ uv run uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
+
+# 3 —— 反向代理（:80），让应用拿到不带端口的网址；可选，但建议开
+cd backend
+uv run python -m app.gateway --port 80
 ```
 
 打开 <http://localhost:3000>。首次启动会写入两个演示项目（`WB_BOOTSTRAP_DEMO_DATA=true`）。
 
-**不需要任何云凭据。** `localtest.me` 把 `*.localtest.me` 泛解析到 `127.0.0.1`，所以 `customer-success.localtest.me` 在浏览器里直接能开，零 DNS 配置。
+**不需要任何云凭据。** `localtest.me` 把 `*.localtest.me` 泛解析到 `127.0.0.1`，所以 `customer-success.localtest.me` 在浏览器里直接能开，零 DNS 配置 —— 起了网关连端口都不用带。如果 80 端口被占用，用 `WB_GATEWAY_HTTP_PORT=8080` 起网关：此时地址会带 `:8080`，因为无端口的地址只会指向一个没人监听的端口。
 
 鉴权默认关闭 —— 打开页面不需要登录，本机上这样最省事。想看组织、角色、SSO 的真实效果，就打开它并播一个演示租户（播种脚本只走公开 API，真实租户也是这么建起来的）：
 
@@ -114,9 +119,11 @@ uv run python tools/access_demo.py                             # 终端 2
 所以重启预览永远压不到生产。
 
 ```
-生产  http://customer-success.localtest.me:4200
-预览  http://customer-success-dev.localtest.me:4204   ← WB_PREVIEW_SUFFIX=-dev
+生产  http://customer-success.localtest.me
+预览  http://customer-success-dev.localtest.me   ← WB_PREVIEW_SUFFIX=-dev
 ```
+
+两个地址都不带端口：一个监听按 `Host` 分流，见[一个监听，没有端口](#一个监听没有端口)。
 
 它只朝一个方向降级，而且会明确告诉你降到了哪一级：
 
@@ -163,6 +170,40 @@ git 不是外挂：工作区从创建起就是一个仓库，每次发布都是
 数据标签页通过和真实云同一套 Provider 接口访问项目自己的库。控制台**默认只读**：`DROP`、`ATTACH`、`PRAGMA writable_schema` 在执行前就被拦下。
 
 ![数据](docs/screenshots/10-project-data.png)
+
+### 一个监听，没有端口
+
+每个项目都会分到一个端口，而带端口的网址是发不出去的网址。所以平台自带一个反向代理 —— nginx 的活，但不需要写 nginx 配置：
+
+```bash
+cd backend && python -m app.gateway --port 80
+```
+
+```
+请求                                 网关 :80               上游
+customer-success.localtest.me        命中 Host ───────────► 127.0.0.1:4200  生产
+customer-success-dev.localtest.me    命中 Host ───────────► 127.0.0.1:4204  预览
+别的域名                              无路由 ─────────────► 404 页面
+```
+
+- **按 Host 分流，不按路径** —— `<slug>.<后缀>` 与 `<slug>-dev.<后缀>` 都解析到 127.0.0.1，`*.localtest.me`（或 `nip.io`、或真实的泛解析域名）不需要改 `/etc/hosts`。
+- **双向流式** —— SSE、日志尾随、大文件上传都是逐块转发；小请求体会先缓冲，让上游仍拿到 `Content-Length`（WSGI 应用读不了 chunked 请求体）。
+- **转发 WebSocket 升级** —— Vite 的 HMR 连接能穿过这一跳，所以预览是真的 dev server，不是一张静态快照。
+- **失败页由网关自己出** —— 项目没在运行时，返回的页面写着项目名、环境、上游端口，还带一个回工作台的链接，而不是一句裸的 `502`。
+
+![网关状态页](docs/screenshots/45-gateway.png)
+
+项目没在运行时，出面的是网关而不是内核：
+
+![项目没在运行](docs/screenshots/46-gateway-down.png)
+
+监听是一个独立进程，这是有意的：控制面重启时已发布的应用照常服务，而且整套栈里只有它需要特权端口。它自己不存状态 —— 路由表就是 `projects` 表，每两秒重读一次。TLS 可以放在它前面（`WB_GATEWAY_TLS_CERT/KEY`），也可以直接架在 `cloudflared` 后面拿公网域名；已经另有入口时，`WB_DOMAIN_BASE_URL` 仍然优先。
+
+项目页把两个地址并排显示成裸域名，设置页列出实时路由表，每条都带一个上游可达性圆点。
+
+端口、TLS、隧道与排障手册：**[docs/gateway.md](docs/gateway.md)**。
+
+![两个地址，都没有端口](docs/screenshots/47-project-addresses.png)
 
 ### 管理能力层
 
@@ -430,6 +471,13 @@ class S3Storage(StorageProvider):
 ```bash
 WB_DOMAIN_SUFFIX=localtest.me    # *.localtest.me -> 127.0.0.1
 WB_PREVIEW_SUFFIX=-dev           # -> <slug>-dev.localtest.me
+WB_GATEWAY_ENABLED=true          # false -> 网址重新带上项目端口
+WB_GATEWAY_HTTP_PORT=80          # 整套栈里唯一需要特权端口的进程
+WB_GATEWAY_HTTPS_PORT=443
+WB_GATEWAY_TLS_CERT=             # 配上证书与私钥即走 https，网址跟着变
+WB_GATEWAY_TLS_KEY=
+WB_GATEWAY_BIND_HOST=0.0.0.0     # 改成 127.0.0.1 就只允许本机访问
+WB_DOMAIN_BASE_URL=              # 已有外部反代/隧道时优先用它
 WB_PREVIEW_MODE=auto             # auto | process | static
 WB_PREVIEW_TIMEOUT=25            # 等待 dev server 的秒数，超时回退静态宿主
 WB_DEPLOY_MODE=simulate          # simulate | process
@@ -490,7 +538,7 @@ scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 
 预览宿主跑在**控制面进程内**，所以重启后端会带走所有预览 —— 状态接口能发现端口已死并诚实报成 `stopped`，但不会自动拉起 · 内置编辑器没有多文件搜索替换 · 授权做到了组织级与项目级，再往下的单资源 ACL 没有 · IdP 分组映射依赖对方真的把 groups 声明发过来，且没有 SCIM，离职的人要到我们这里停用或等会话过期才失效 · SQL 护栏是首关键字白名单而非真正的解析器 · 部署串行化只在单进程内有效，多副本仍可能竞争 · MCP 鉴权依赖客户端主动带 Bearer 头 · Agent 写文件没有影子副本，`write_project_file` 前没有 dry-run。
 
-每一条的推荐解法见[架构文档 §14](docs/architecture.md#14-已知限制与下一步)。
+每一条的推荐解法见[架构文档 §15](docs/architecture.md#15-已知限制与下一步)。
 
 ---
 

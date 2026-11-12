@@ -7,6 +7,7 @@ import type {
   DomainBinding,
   EnvVar,
   EventItem,
+  GatewayStatus,
   GitCommit,
   GitDiff,
   GitStatus,
@@ -90,6 +91,7 @@ const del = (path: string) => request<void>(path, { method: "DELETE" });
 export const api = {
   overview: () => request<Overview>("/system/overview"),
   settings: () => request<Settings>("/system/settings"),
+  gateway: () => request<GatewayStatus>("/system/gateway"),
   providers: () => request<Record<string, unknown>>("/system/providers"),
   events: (limit = 60) => request<EventItem[]>(`/system/events?limit=${limit}`),
   llm: () => request<LlmStatus>("/system/llm"),

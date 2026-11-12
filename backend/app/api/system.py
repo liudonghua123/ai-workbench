@@ -6,7 +6,9 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import get_session
 from app.api.deps import visible_projects
+from app.core.ids import port_open
 from app.core.security import Principal, get_principal
+from app.gateway.routes import table as route_table
 from app.models import (
     Agent,
     AgentRun,
@@ -175,6 +177,65 @@ def public_settings():
             "database": settings.database_provider,
             "domain": settings.domain_provider,
             "deploy": settings.deploy_provider,
+        },
+        # host-only URLs come from the built-in gateway; the UI needs to know so
+        # it can label an address as "no port" instead of just showing a bare host
+        "gateway": {
+            "enabled": settings.gateway_enabled,
+            "active": settings.gateway_active,
+            "scheme": settings.gateway_scheme,
+            "port": settings.gateway_port,
+            "bind_host": settings.gateway_bind_host,
+            "upstream_host": settings.gateway_upstream_host,
+            "preview_suffix": settings.preview_suffix,
+            "route_ttl": settings.gateway_route_ttl,
+        },
+    }
+
+
+@router.get("/gateway")
+def gateway_status(
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    """What the reverse proxy is serving right now, and whether it is up.
+
+    Two questions the UI cannot answer on its own: is the listener actually
+    running (it is a separate process), and does each upstream answer? Both are
+    measured, not inferred from a row, for the same reason previews are: a stored
+    ``running`` flag outlives the process it describes.
+    """
+    visible = {project.id for project in visible_projects(session, principal)}
+    every_route = route_table.snapshot()
+    routes = []
+    for route in every_route:
+        if route.project_id not in visible:
+            continue
+        item = route.to_public()
+        item["reachable"] = port_open(route.port)
+        routes.append(item)
+
+    listening = settings.gateway_active and port_open(settings.gateway_port)
+    return {
+        "enabled": settings.gateway_enabled,
+        "active": settings.gateway_active,
+        "listening": listening,
+        "scheme": settings.gateway_scheme,
+        "port": settings.gateway_port,
+        "bind_host": settings.gateway_bind_host,
+        "upstream_host": settings.gateway_upstream_host,
+        "domain_suffix": settings.domain_suffix,
+        "preview_suffix": settings.preview_suffix,
+        "status_page": f"{settings.gateway_scheme}://localhost:{settings.gateway_port}/__gateway/",
+        "routes": routes,
+        "counts": {
+            "total": len(routes),
+            # the listener routes every tenant; only this number says how much of
+            # the gateway this principal is being shown
+            "all": len(every_route),
+            "production": sum(1 for r in routes if r["environment"] == "production"),
+            "preview": sum(1 for r in routes if r["environment"] == "preview"),
+            "reachable": sum(1 for r in routes if r["reachable"]),
         },
     }
 

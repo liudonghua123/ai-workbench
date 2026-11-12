@@ -843,6 +843,68 @@ textarea {
   white-space: nowrap;
 }
 
+/* ------------------------------------------------------- project addresses */
+/* Two hosts, one project. The gateway makes them port-free, so the only
+   difference a reader has to spot is the suffix — hence the same shape and the
+   same weight, side by side. */
+.addr-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.addr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  max-width: 100%;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  font-size: 11.5px;
+  min-width: 0;
+}
+
+.addr-label {
+  color: var(--ink-3);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.addr-host {
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px dashed transparent;
+}
+
+.addr-host:hover {
+  border-bottom-color: var(--ink-4);
+}
+
+.addr-note {
+  color: var(--ink-3);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.addr.is-muted {
+  background: transparent;
+  border-style: dashed;
+}
+
+.addr.is-muted .addr-host {
+  color: var(--ink-3);
+}
+
 .mono {
   font-family: var(--mono);
   font-size: 12px;

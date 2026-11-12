@@ -5,6 +5,8 @@ Everything here is idempotent — the API can restart as often as you like.
 
 from __future__ import annotations
 
+import logging
+
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -14,6 +16,8 @@ from app.models import Agent, McpServer, Project, Skill
 from app.services import scaffold
 from app.services.scaffold import CreateProjectSpec
 from app.services.system_tools import TOOLS
+
+logger = logging.getLogger("workbench.seed")
 
 SYSTEM_TOOLS = [
     {"name": name, "description": (fn.__doc__ or "").strip().splitlines()[0]}
@@ -97,6 +101,27 @@ def seed() -> None:
         _seed_agents(session)
     if settings.bootstrap_demo_data:
         _seed_projects()
+    _heal_endpoints()
+
+
+def _heal_endpoints() -> None:
+    """Keep stored project URLs in step with how the platform is addressed.
+
+    Switching the built-in gateway on (or off) changes every project's public
+    address. Rows keep the old one until something recomputes it, and the UI
+    would happily link to a port that is no longer the entry point.
+    """
+    from app.services import conventions
+
+    with Session(engine) as session:
+        healed = 0
+        for project in session.exec(select(Project)).all():
+            if conventions.normalize_endpoints(project):
+                session.add(project)
+                healed += 1
+        if healed:
+            session.commit()
+            logger.info("endpoints normalised for %s project(s)", healed)
 
 
 def _seed_identity(session: Session) -> None:

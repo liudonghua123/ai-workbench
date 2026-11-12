@@ -30,6 +30,7 @@ exposed over MCP so an agent can keep working on it afterwards. **There is no
 | **Four templates, four shapes** | Fullstack (FastAPI + Next.js), pure frontend (Vite + React), pure backend (FastAPI + MCP), agent service (FastAPI + MCP + harness) |
 | **In-project code editing** | File tree + syntax-highlighting editor with zero extra dependencies — the same `write_project_file` call an agent makes |
 | **A real debug environment** | Every project gets `<slug>-dev.<suffix>` on its own port and process, hot reload included. The panel embeds the live site |
+| **Port-free published URLs** | A built-in reverse proxy (a 400-line nginx) routes `<slug>.<suffix>` and `<slug>-dev.<suffix>` by Host, streams bodies, and proxies WebSocket upgrades — so `http://my-app.localtest.me` is the address you send to somebody |
 | **Version control in the UI** | Stage, diff, commit, restore a file, revert a commit — git is the source of truth, not a side feature |
 | **Publish = commit → tag → deploy** | Publish tags `deploy/v<N>` and deploys *that* sha, so "what is live" is a git object you can point at |
 | **One-click deploy** | Versioned deployments with streaming build logs and health checks |
@@ -62,6 +63,10 @@ uv run uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
+
+# 3 — reverse proxy (:80), so apps get a port-free URL — optional but recommended
+cd backend
+uv run python -m app.gateway --port 80
 ```
 
 Open <http://localhost:3000>. Two demo projects are seeded on first boot
@@ -69,7 +74,9 @@ Open <http://localhost:3000>. Two demo projects are seeded on first boot
 
 No cloud credentials are needed. `localtest.me` resolves `*.localtest.me` to
 `127.0.0.1`, so `customer-success.localtest.me` works in your browser with zero
-DNS setup.
+DNS setup — and with the gateway running it needs no port either. On a machine
+where port 80 is taken, run the gateway on `WB_GATEWAY_HTTP_PORT=8080` instead:
+addresses then say `:8080`, because a port-free URL would point at nothing.
 
 Auth is off by default — the console just opens, which is what you want on a
 laptop. To see organizations, roles and SSO for real, turn it on and seed a demo
@@ -132,9 +139,12 @@ with its own port, its own process and its own domain, so a preview restart can
 never take production down.
 
 ```
-production  http://customer-success.localtest.me:4200
-preview     http://customer-success-dev.localtest.me:4204   ← WB_PREVIEW_SUFFIX=-dev
+production  http://customer-success.localtest.me
+preview     http://customer-success-dev.localtest.me   ← WB_PREVIEW_SUFFIX=-dev
 ```
+
+No port in either address: one listener routes by `Host`, see
+[One listener, no ports](#one-listener-no-ports).
 
 It degrades in exactly one direction, and says which one it took:
 
@@ -189,6 +199,57 @@ interface a real cloud would implement. The console is **read-only by default** 
 SQLite.
 
 ![Data tab](docs/screenshots/10-project-data.png)
+
+### One listener, no ports
+
+Every project gets an allocated port, and a port in a URL is a URL you cannot
+send to anybody. So the platform ships its own reverse proxy — the nginx job,
+without the nginx config file:
+
+```bash
+cd backend && python -m app.gateway --port 80
+```
+
+```
+request                              gateway :80            upstream
+customer-success.localtest.me        Host match ──────────► 127.0.0.1:4200  production
+customer-success-dev.localtest.me    Host match ──────────► 127.0.0.1:4204  preview
+something-else.localtest.me           no route ───────────► 404 page
+```
+
+- **Host routing, not path routing** — `<slug>.<suffix>` and
+  `<slug>-dev.<suffix>` both point at 127.0.0.1, so `*.localtest.me` (or
+  `nip.io`, or a real wildcard zone) resolves them without editing `/etc/hosts`.
+- **Streaming both ways** — SSE, log tails and large uploads are pumped chunk by
+  chunk. Small request bodies are buffered so the upstream still sees a
+  `Content-Length` (WSGI apps cannot read chunked input).
+- **WebSocket upgrades proxied** — Vite's HMR socket survives the hop, so the
+  preview is a real dev server, not a static snapshot.
+- **The gateway answers its own failures** — a stopped project gets a page that
+  names the project, the environment and the upstream port, with a link back to
+  the workbench, instead of a bare `502`.
+
+![Gateway status page](docs/screenshots/45-gateway.png)
+
+When a project is not running, the gateway answers instead of the kernel:
+
+![A stopped project](docs/screenshots/46-gateway-down.png)
+
+The listener is a separate process on purpose: it keeps published apps up while
+the control plane restarts, and it is the only thing that needs a privileged
+port. It holds no state — the route table is the `projects` table, re-read every
+two seconds. Put TLS in front (`WB_GATEWAY_TLS_CERT/KEY`) or run it behind
+`cloudflared` for a public domain; `WB_DOMAIN_BASE_URL` still wins if something
+else already terminates traffic.
+
+The project page shows both addresses as bare hosts, and the settings page lists
+the live routing table with a reachability dot per upstream.
+
+Runbook — ports, TLS, tunnels, failure modes:
+**[docs/gateway.md](docs/gateway.md)**.
+
+![Two addresses, no ports](docs/screenshots/47-project-addresses.png)
+
 
 ### Managing the capability layer
 
@@ -506,6 +567,13 @@ Copy `.env.example` to `.env`. Every key is optional and prefixed `WB_`.
 ```bash
 WB_DOMAIN_SUFFIX=localtest.me    # *.localtest.me -> 127.0.0.1
 WB_PREVIEW_SUFFIX=-dev           # -> <slug>-dev.localtest.me
+WB_GATEWAY_ENABLED=true          # false -> URLs carry the project port again
+WB_GATEWAY_HTTP_PORT=80          # the only privileged port in the stack
+WB_GATEWAY_HTTPS_PORT=443
+WB_GATEWAY_TLS_CERT=             # set cert+key -> https, and URLs follow
+WB_GATEWAY_TLS_KEY=
+WB_GATEWAY_BIND_HOST=0.0.0.0     # 127.0.0.1 -> only reachable locally
+WB_DOMAIN_BASE_URL=              # external proxy/tunnel base URL wins over the gateway
 WB_PREVIEW_MODE=auto             # auto | process | static
 WB_PREVIEW_TIMEOUT=25            # seconds before falling back to the static host
 WB_DEPLOY_MODE=simulate          # simulate | process
@@ -580,7 +648,7 @@ first-keyword allow-list, not a real parser · deployments are serialised per
 process, so two API replicas could still race · MCP auth relies on the client
 sending the bearer header · the agent's writes are unshadowed — no dry-run before
 `write_project_file`. See
-[§14 of the architecture doc](docs/architecture.md#14-已知限制与下一步) for the
+[§15 of the architecture doc](docs/architecture.md#15-已知限制与下一步) for the
 recommended fix for each.
 
 ---
