@@ -167,6 +167,13 @@ SYSTEM_PROMPT = """你是 AI Workbench 的操盘 Agent。你可以通过工具�
 6. 查数据库只能读（SELECT / WITH / EXPLAIN）。
 7. 工具报错不要重复同样的调用，换参数或换思路；三次失败就停下来向用户说明。
 8. 最终回答用中文，简洁说明做了什么、预览/生产地址、下一步建议；不要罗列内部 JSON。
+
+权限边界（重要）：
+- 你继承调用者的权限：同一个工具，开发者能调、只读成员不能调。403 不是 bug，是边界。
+- 动手前若不确定，先 describe_access 看自己的角色与权限集，或 check_permission 预检单个权限。
+- 不要试图绕过：不要改配置、不要伪造身份、不要在只读库里写。被拒绝就如实告诉用户谁该做什么。
+- 组织与身份源：list_organizations / list_org_members / list_sso_providers 可读；
+  SSO 连接（CAS / OAuth2 / OIDC / 企业微信 / 钉钉）的密钥只存在服务端，任何工具都拿不到。
 """
 
 
@@ -343,6 +350,7 @@ class LocalHarness(Harness):
         wants_discard = bool(re.search(r"撤销|放弃|discard|还原", lowered))
         wants_git = bool(re.search(r"版本|提交|commit|\bgit\b|历史|history", lowered))
         wants_convention = bool(re.search(r"规范|约定|体检|convention|conformance", lowered))
+        wants_access = bool(re.search(r"权限|角色|成员|组织|sso|单点|rbac|permission|access|member|role", lowered))
         wants_deploy = bool(re.search(r"部署|deploy", lowered))
         wants_status = bool(re.search(r"状态|日志|status|log", lowered))
         wants_list = bool(re.search(r"列出|列表|所有项目|list", lowered))
@@ -422,6 +430,14 @@ class LocalHarness(Harness):
             # the check itself already ran above when a project was resolved
             if not project_id:
                 call("读取工作台约定与工具面", "describe_workbench")
+            return render_report(prompt, steps), steps
+
+        if wants_access:
+            # answers "what may I do" from the caller's real permission set
+            call("读取调用者的角色与权限集", "describe_access")
+            call("列出可访问的组织", "list_organizations")
+            call("列出组织成员", "list_org_members")
+            call("读取已配置的身份源", "list_sso_providers")
             return render_report(prompt, steps), steps
 
         if wants_run:

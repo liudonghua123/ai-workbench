@@ -91,11 +91,53 @@ DEMO_PROJECTS = [
 
 def seed() -> None:
     with Session(engine) as session:
+        _seed_identity(session)
         _seed_mcp(session)
         _seed_skills(session)
         _seed_agents(session)
     if settings.bootstrap_demo_data:
         _seed_projects()
+
+
+def _seed_identity(session: Session) -> None:
+    """Default organization, builtin roles, and the demo IdP.
+
+    The demo provider is the OIDC-shaped one served by this backend. It is a real
+    round trip (state → code → token → profile), which is why the SSO path can be
+    verified offline; the login page labels it 演示.
+    """
+    from app.models import IdentityProvider, Project
+    from app.services import identity
+
+    org = identity.default_org(session)
+    identity.ensure_builtin_roles(session, org)
+
+    if not session.exec(
+        select(IdentityProvider).where(IdentityProvider.key == "demo-sso")
+    ).first():
+        session.add(
+            IdentityProvider(
+                id=new_id("idp"),
+                org_id=org.id,
+                key="demo-sso",
+                kind="mock",
+                name="演示身份源",
+                icon="mock",
+                enabled=True,
+                config={"base_url": settings.public_api_base or "http://127.0.0.1:8000"},
+                default_role_key="developer",
+                status="ready",
+            )
+        )
+        session.commit()
+
+    # projects created before organizations existed belong to the default org
+    legacy = session.exec(select(Project).where(Project.org_id == "")).all()
+    for project in legacy:
+        project.org_id = org.id
+        session.add(project)
+    if legacy:
+        session.commit()
 
 
 def _seed_mcp(session: Session) -> None:
@@ -175,6 +217,9 @@ def _seed_projects() -> None:
         existing = session.exec(select(Project)).all()
         if existing:
             return
+        from app.services import identity
+
+        org = identity.default_org(session)
         for item in DEMO_PROJECTS:
             try:
                 scaffold.create_project(
@@ -184,6 +229,7 @@ def _seed_projects() -> None:
                         slug=item["slug"],
                         template_key=item["template_key"],
                         description=item["description"],
+                        org_id=org.id,
                     ),
                 )
             except Exception:  # noqa: BLE001 - demos must never block startup

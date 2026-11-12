@@ -48,6 +48,9 @@ class CreateProjectSpec:
     resources: list[str] = field(default_factory=list)
     variables: dict[str, str] = field(default_factory=dict)
     deploy: bool = False
+    # organization that owns the project; empty -> the caller's / default org
+    org_id: str = ""
+    owner_id: str = ""
 
 
 def log_event(session: Session, kind: str, message: str, *, project_id: str | None = None, **payload):
@@ -148,6 +151,8 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
         preview_url=context["preview_url"],
         health_path=template.health_path or "/",
         primary_url=context["fqdn_url"],
+        org_id=spec.org_id,
+        owner_id=spec.owner_id,
         meta={"variables": context},
     )
     session.add(project)

@@ -87,6 +87,20 @@ class Settings(BaseSettings):
     # token handed to the auto-provisioned operator account when auth is on
     auth_bootstrap_token: str = "workbench-dev-token"
 
+    # --- identity / SSO ------------------------------------------------
+    # where the browser lands after an SSO round trip
+    frontend_url: str = "http://localhost:3000"
+    # public base of this API, used to build {base}/api/v1/auth/{key}/callback.
+    # empty -> derived from the incoming request (correct behind most proxies)
+    public_api_base: str = ""
+    auth_session_hours: int = 12
+    # local email+password sign-up; independent of SSO, so a fresh install is usable
+    auth_allow_signup: bool = True
+    # slug of the organization that owns projects created before orgs existed
+    auth_default_org: str = "default"
+    # minutes an in-flight SSO state stays valid
+    auth_state_ttl: int = 10
+
     # --- misc ----------------------------------------------------------
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     bootstrap_demo_data: bool = True

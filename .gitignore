@@ -1,5 +1,6 @@
 # --- runtime data (generated projects, buckets, sqlite dbs, dns zone) ---
 data/
+data-*/
 
 # --- python ---
 .venv/

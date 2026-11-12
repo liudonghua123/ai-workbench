@@ -21,6 +21,7 @@ logger = logging.getLogger("workbench.migrate")
 COLUMNS: dict[str, dict[str, str]] = {
     "projects": {
         "owner_id": "VARCHAR DEFAULT ''",
+        "org_id": "VARCHAR DEFAULT ''",
         "build_command": "VARCHAR DEFAULT ''",
         "dev_command": "VARCHAR DEFAULT ''",
         "dev_port": "INTEGER",
@@ -36,6 +37,7 @@ COLUMNS: dict[str, dict[str, str]] = {
 # created after the column exists; IF NOT EXISTS keeps it idempotent
 INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS ix_projects_owner_id ON projects (owner_id)",
+    "CREATE INDEX IF NOT EXISTS ix_projects_org_id ON projects (org_id)",
 ]
 
 

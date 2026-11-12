@@ -28,7 +28,7 @@ TERMINAL_STATUSES = {"running", "failed", "stopped"}
 
 def _project(session: Session, project_id: str, principal: Principal):
     project = scaffold.get_project(session, project_id)
-    if not can_access(principal, project.owner_id):
+    if not can_access(principal, project.owner_id, project.org_id):
         raise NotFoundError(f"项目不存在: {project_id}")
     return project
 

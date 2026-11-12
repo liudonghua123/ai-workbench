@@ -6,6 +6,11 @@
  * Creates one browser context per preference combination (locale / nav / theme)
  * so localStorage state never leaks between captures. Assumes the backend is on
  * :8000 and the frontend on :3000.
+ *
+ * The backend runs with WB_AUTH_ENABLED=true, so the script signs in with the
+ * demo account (WB_USER / WB_PASS, default owner@acme.test) and pins that session
+ * to WB_ORG. Every API call carries the bearer token and every browser context
+ * seeds it into localStorage — the same path a human takes.
  */
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
@@ -16,9 +21,15 @@ const WEB = process.env.WEB_URL ?? "http://127.0.0.1:3000";
 const API = process.env.API_URL ?? "http://127.0.0.1:8000/api/v1";
 const OUT = fileURLToPath(new URL("../docs/screenshots/", import.meta.url));
 
+const CREDS = {
+  email: process.env.WB_USER ?? "owner@acme.test",
+  password: process.env.WB_PASS ?? "workbench-demo-1",
+  org: process.env.WB_ORG ?? "default",
+};
+
 const problems = [];
 const steps = [];
-// set while a capture deliberately provokes an error (the 401 token-gate shot)
+// set while a capture deliberately provokes an error (the 401 redirect shot)
 let quiet = false;
 
 // project page tab order (see app/projects/[id]/page.tsx)
@@ -33,6 +44,43 @@ const TAB = {
   settings: 7,
 };
 
+/**
+ * Signs in over the API and returns the bearer token. The token is a session, so
+ * the organization it is pinned to decides what the screenshots show — switch to
+ * WB_ORG before capturing anything.
+ */
+async function signIn() {
+  const res = await fetch(`${API}/auth/local/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: CREDS.email, password: CREDS.password }),
+  }).catch(() => null);
+  if (!res?.ok) {
+    problems.push(`sign-in failed (${res?.status ?? "network"}) — run backend/tools/access_demo.py`);
+    return "";
+  }
+  const { token } = await res.json();
+  const headers = { authorization: `Bearer ${token}` };
+  const orgs = await fetch(`${API}/orgs`, { headers })
+    .then((r) => r.json())
+    .catch(() => []);
+  const org = orgs.find((item) => item.slug === CREDS.org) ?? orgs[0];
+  if (org) {
+    await fetch(`${API}/auth/switch-org`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ org_id: org.id }),
+    });
+    steps.push(`  · signed in as ${CREDS.email} → ${org.name} (${org.role_key})`);
+  }
+  return token;
+}
+
+/** fetch wrapper that always carries the session token */
+let AUTH = {};
+const apiFetch = (path, init = {}) =>
+  fetch(`${API}${path}`, { ...init, headers: { ...AUTH, ...(init.headers ?? {}) } });
+
 async function openTab(page, projectId, tab) {
   await page.goto(`${WEB}/projects/${projectId}`, { waitUntil: "networkidle" });
   await page.getByRole("tab").nth(TAB[tab]).click();
@@ -40,8 +88,7 @@ async function openTab(page, projectId, tab) {
 }
 
 async function pickProject() {
-  const res = await fetch(`${API}/projects`);
-  const list = await res.json();
+  const list = await apiFetch("/projects").then((r) => r.json());
   return (
     list.find((p) => p.type === "fullstack" && p.deployment_count > 0) ??
     list.find((p) => p.type === "fullstack") ??
@@ -55,7 +102,7 @@ async function pickProject() {
  * a wasted second, and a fresh one also exercises the run → SSE → iframe path.
  */
 async function waitForPreview(projectId, timeoutMs = 45_000) {
-  await fetch(`${API}/projects/${projectId}/preview/start`, {
+  await apiFetch(`/projects/${projectId}/preview/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: "{}",
@@ -63,7 +110,7 @@ async function waitForPreview(projectId, timeoutMs = 45_000) {
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const state = await fetch(`${API}/projects/${projectId}/preview`).then((r) => r.json());
+    const state = await apiFetch(`/projects/${projectId}/preview`).then((r) => r.json());
     if (state.status === "running") return true;
     if (state.status === "failed") {
       problems.push(`preview failed: ${state.latest?.error ?? "unknown"}`);
@@ -86,19 +133,20 @@ function watch(page) {
 }
 
 /** Fresh context with the given preferences already in localStorage. */
-async function context(browser, { locale = "en", nav = "rail", theme = "light" } = {}) {
+async function context(browser, { locale = "en", nav = "rail", theme = "light", token = "" } = {}) {
   const ctx = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
-    colorScheme: "light",
+    colorScheme: theme === "dark" ? "dark" : "light",
   });
   await ctx.addInitScript(
-    ({ locale, nav, theme }) => {
+    ({ locale, nav, theme, token }) => {
       localStorage.setItem("wb-locale", locale);
       localStorage.setItem("wb-nav", nav);
       localStorage.setItem("wb-theme", theme);
+      if (token) localStorage.setItem("wb-token", token);
     },
-    { locale, nav, theme },
+    { locale, nav, theme, token },
   );
   const page = await ctx.newPage();
   watch(page);
@@ -114,13 +162,16 @@ async function shot(page, name, note) {
 const run = async () => {
   if (!existsSync(OUT)) await mkdir(OUT, { recursive: true });
 
+  const token = await signIn();
+  AUTH = token ? { authorization: `Bearer ${token}` } : {};
+
   const browser = await chromium.launch();
   const project = await pickProject();
   if (!project) throw new Error("no project to open");
 
   // ---------------------------------------------------------------- english
   {
-    const { ctx, page } = await context(browser);
+    const { ctx, page } = await context(browser, { token });
 
     await page.goto(WEB, { waitUntil: "networkidle" });
     await shot(page, "01-dashboard", "overview (en)");
@@ -155,8 +206,7 @@ const run = async () => {
     await shot(page, "06-project-preview", "debug environment on <slug>-dev");
 
     // one uncommitted edit so the version panel has something to show
-    const file = await fetch(`${API}/projects/${project.id}/file?path=README.md`).then((r) => r.json());
-    await fetch(`${API}/projects/${project.id}/file`, {
+    await apiFetch(`/projects/${project.id}/file`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -164,7 +214,6 @@ const run = async () => {
         content: `# Release notes\n\n- preview environment at ${project.preview?.fqdn ?? "<slug>-dev"}\n`,
       }),
     });
-    void file;
     await openTab(page, project.id, "version");
     await page.locator(".change-row").first().click().catch(() => undefined);
     await page.waitForTimeout(500);
@@ -194,7 +243,7 @@ const run = async () => {
     }
 
     // live deploy: trigger one through the API, then watch the SSE stream fill the log
-    const triggered = await fetch(`${API}/projects/${project.id}/deployments`, {
+    const triggered = await apiFetch(`/projects/${project.id}/deployments`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -218,7 +267,7 @@ const run = async () => {
 
   // ------------------------------------------------------------ dark theme
   {
-    const { ctx, page } = await context(browser, { theme: "dark" });
+    const { ctx, page } = await context(browser, { theme: "dark", token });
     await page.goto(WEB, { waitUntil: "networkidle" });
     await shot(page, "19-dark", "dark theme");
     await ctx.close();
@@ -226,7 +275,7 @@ const run = async () => {
 
   // -------------------------------------------------------------- top nav
   {
-    const { ctx, page } = await context(browser, { nav: "top" });
+    const { ctx, page } = await context(browser, { nav: "top", token });
     await page.goto(WEB, { waitUntil: "networkidle" });
     await shot(page, "20-nav-top", "nav in top bar");
     await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "networkidle" });
@@ -236,7 +285,7 @@ const run = async () => {
 
   // --------------------------------------------------------------- chinese
   {
-    const { ctx, page } = await context(browser, { locale: "zh" });
+    const { ctx, page } = await context(browser, { locale: "zh", token });
     await page.goto(WEB, { waitUntil: "networkidle" });
     await shot(page, "22-dashboard-zh", "overview (zh)");
     await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "networkidle" });
@@ -245,27 +294,92 @@ const run = async () => {
     await shot(page, "24-agents-zh", "agents (zh)");
     await page.goto(`${WEB}/settings`, { waitUntil: "networkidle" });
     await shot(page, "25-settings-zh", "system settings (zh)");
+
+    // access console in Chinese, one tab per screenshot
+    for (const [tab, index, name] of [
+      ["members", 0, "37-access-zh-members"],
+      ["roles", 1, "38-access-zh-roles"],
+      ["sso", 2, "39-access-zh-sso"],
+      ["audit", 3, "40-access-zh-audit"],
+    ]) {
+      await page.goto(`${WEB}/access`, { waitUntil: "networkidle" });
+      await page.getByRole("tab").nth(index).click();
+      await page.waitForTimeout(600);
+      await shot(page, name, `access · ${tab} (zh)`);
+    }
     await ctx.close();
   }
 
-  // ------------------------------------------------------------ token gate
-  // Forced with a route stub instead of flipping WB_AUTH_ENABLED, so the capture
-  // is deterministic and the rest of the run keeps talking to a public API.
+  // --------------------------------------------------------- access control
   {
+    const { ctx, page } = await context(browser, { token });
+
+    await page.goto(`${WEB}/access`, { waitUntil: "networkidle" });
+    await shot(page, "26-access-members", "members + project grants");
+
+    await page.getByRole("tab").nth(1).click();
+    await page.waitForTimeout(600);
+    await shot(page, "27-access-roles", "roles: a permission set, nothing more");
+
+    // open the role editor so the permission grid is visible
+    await page.getByRole("button", { name: "Edit" }).first().click();
+    await page.waitForTimeout(500);
+    await shot(page, "28-access-role-editor", "role editor driven by the catalog");
+
+    await page.goto(`${WEB}/access`, { waitUntil: "networkidle" });
+    await page.getByRole("tab").nth(2).click();
+    await page.waitForTimeout(600);
+    await shot(page, "29-access-sso", "five identity providers, one status column");
+
+    await page.getByRole("button", { name: /Add connection|新增连接/ }).first().click();
+    await page.waitForTimeout(500);
+    await shot(page, "30-access-sso-form", "SSO form rendered from the schema");
+
+    await page.goto(`${WEB}/access`, { waitUntil: "networkidle" });
+    await page.getByRole("tab").nth(3).click();
+    await page.waitForTimeout(600);
+    await shot(page, "31-access-audit", "audit trail including denials");
+
+    await page.getByRole("tab").nth(4).click();
+    await page.waitForTimeout(600);
+    await shot(page, "32-access-settings", "organization, sessions, password");
+
+    // org switcher + account menu
+    await page.goto(WEB, { waitUntil: "networkidle" });
+    await page.locator(".session-menu .btn").first().click();
+    await page.waitForTimeout(400);
+    await shot(page, "33-org-switcher", "one session, several tenants");
+
+    await ctx.close();
+  }
+
+  // ------------------------------------------------------------ dark console
+  {
+    const { ctx, page } = await context(browser, { theme: "dark", token });
+    await page.goto(`${WEB}/access`, { waitUntil: "networkidle" });
+    await shot(page, "35-access-dark", "access console, dark theme");
+    await ctx.close();
+  }
+
+  // ------------------------------------------------------------- signed out
+  {
+    // the 401s here are the point of the capture
     quiet = true;
     const { ctx, page } = await context(browser);
-    await ctx.route(`${API}/**`, (route) =>
-      route.fulfill({
-        status: 401,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: "missing or invalid token" }),
-      }),
-    );
-    await page.goto(`${WEB}/projects`, { waitUntil: "networkidle" });
-    await page.getByRole("dialog").waitFor({ timeout: 8000 }).catch(() => problems.push("token gate never opened"));
-    await shot(page, "26-token-gate", "401 anywhere opens the token gate");
-    quiet = false;
+    // the login page keeps no long-lived connections, but Next's prefetching makes
+    // networkidle unreliable here — wait for the panel itself instead
+    await page.goto(`${WEB}/login`, { waitUntil: "domcontentloaded" });
+    await page.locator(".auth-panel").waitFor({ timeout: 15_000 })
+      .catch(() => problems.push("login panel never rendered"));
+    await shot(page, "34-login", "sign in: SSO first, password second");
+
+    // an expired session must land on the same page, not on a broken dashboard
+    await page.goto(`${WEB}/access`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL(/\/login/, { timeout: 10_000 }).catch(() => problems.push("401 did not redirect to /login"));
+    await shot(page, "36-auth-redirect", "a rejected session lands on /login");
+    // close first: the 401 that triggered the redirect may still be in flight
     await ctx.close();
+    quiet = false;
   }
 
   await browser.close();

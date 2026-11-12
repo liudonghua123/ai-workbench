@@ -31,7 +31,7 @@ router = APIRouter(prefix="/projects/{project_id}", tags=["workspace"])
 
 def _load(session: Session, project_id: str, principal: Principal):
     project = scaffold.get_project(session, project_id)
-    if not can_access(principal, project.owner_id):
+    if not can_access(principal, project.owner_id, project.org_id):
         from app.core.errors import NotFoundError
 
         raise NotFoundError(f"项目不存在: {project_id}")

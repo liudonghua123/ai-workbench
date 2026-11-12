@@ -366,3 +366,239 @@ export interface Me {
   auth_enabled: boolean;
   roles: Record<string, string>;
 }
+
+/* ------------------------------------------------------- access control */
+
+export interface PermissionDef {
+  key: string;
+  group: string;
+  domain: string;
+  action: string;
+  label: string;
+  label_zh: string;
+  description: string;
+  description_zh: string;
+}
+
+export interface PermissionGroup {
+  key: string;
+  label: string;
+  label_zh: string;
+  items: PermissionDef[];
+}
+
+export interface PermissionCatalog {
+  groups: PermissionGroup[];
+  permissions: PermissionDef[];
+  total: number;
+}
+
+export interface Organization {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  plan: string;
+  status: string;
+  owner_id: string;
+  role_key: string;
+  counts: { members?: number; projects?: number };
+  settings?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface OrgRole {
+  id?: string;
+  key: string;
+  name: string;
+  /** builtins ship a translated label; custom roles repeat `name` */
+  name_zh?: string;
+  description: string;
+  description_zh?: string;
+  permissions: string[];
+  expanded?: string[];
+  count: number;
+  builtin: boolean;
+  rank: number;
+  members?: number;
+}
+
+export interface OrgMember {
+  id: string;
+  email: string;
+  name: string;
+  avatar: string;
+  status: string;
+  role_key: string;
+  membership_id?: string;
+  membership_status?: string;
+  title?: string;
+  last_login_at: string | null;
+  has_password?: boolean;
+  bindings?: { id: string; scope_type: string; scope_id: string; role_key: string; permissions: string[] }[];
+}
+
+export interface Principal {
+  name: string;
+  role: string;
+  anonymous: boolean;
+  user_id: string;
+  email: string;
+  org_id: string;
+  org_slug: string;
+  is_platform_admin: boolean;
+  auth_method: string;
+  permissions: string[];
+  organizations: { id: string; slug: string; name: string; role_key: string }[];
+}
+
+export interface SessionInfo {
+  id: string;
+  ip: string;
+  user_agent: string;
+  created_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
+/** Full session view from /auth/me (the settings page uses the leaner /system/me). */
+export interface SessionMe {
+  principal: Principal;
+  user: OrgMember | null;
+  auth_enabled: boolean;
+  organizations: Organization[];
+  active_org: Organization | null;
+  sessions: SessionInfo[];
+}
+
+export interface LoginProvider {
+  key: string;
+  kind: string;
+  name: string;
+  icon: string;
+  mode: string;
+  org_id: string;
+  /** which tenant the connection belongs to — two orgs can point at one IdP */
+  org_name?: string;
+  org_slug?: string;
+  ready: boolean;
+  missing: string[];
+}
+
+export interface ProviderDirectory {
+  auth_enabled: boolean;
+  local_login: boolean;
+  signup_enabled: boolean;
+  providers: LoginProvider[];
+  count: number;
+}
+
+export interface IdentityProvider {
+  id: string;
+  org_id: string;
+  key: string;
+  kind: string;
+  name: string;
+  icon: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  has_secret: boolean;
+  default_role_key: string;
+  auto_create_users: boolean;
+  auto_join: boolean;
+  allowed_domains: string[];
+  status: "unconfigured" | "unchecked" | "ready" | "error" | string;
+  missing: string[];
+  last_error: string;
+  last_check_at: string | null;
+  schema?: SsoKindSchema | null;
+}
+
+export interface SsoField {
+  key: string;
+  label: string;
+  label_zh?: string;
+  placeholder?: string;
+  help?: string;
+  help_en?: string;
+  type?: "text" | "password" | "select" | "json" | "switch" | "list" | "role";
+  options?: string[];
+  default?: string | boolean;
+  required?: boolean;
+}
+
+export interface SsoKindSchema {
+  kind?: string;
+  label: string;
+  label_zh?: string;
+  docs?: string;
+  blurb: string;
+  blurb_en?: string;
+  fields: SsoField[];
+  secrets: SsoField[];
+}
+
+export interface SsoSchema {
+  kinds: SsoKindSchema[];
+  common: SsoField[];
+}
+
+export interface ProbeResult {
+  ok: boolean;
+  status: string;
+  missing?: string[];
+  message?: string;
+  provider?: IdentityProvider;
+  [key: string]: unknown;
+}
+
+export interface Invitation {
+  id: string;
+  org_id: string;
+  email: string;
+  role_key: string;
+  status: string;
+  invited_by: string;
+  expires_at: string | null;
+  created_at: string;
+  accept_token?: string;
+  accept_url?: string;
+}
+
+/** Extra grant that only applies inside one scope (today: one project). */
+export interface RoleBinding {
+  id: string;
+  user_id: string;
+  role_key: string;
+  permissions: string[];
+  scope_type: string;
+  scope_id: string;
+  created_by?: string;
+  created_at: string;
+}
+
+/** An external subject linked to a local account (one row per IdP login). */
+export interface LinkedIdentity {
+  id: string;
+  provider_key: string;
+  kind: string;
+  subject: string;
+  email: string;
+  display_name: string;
+  last_login_at: string | null;
+}
+
+export interface AuditRow {
+  id: string;
+  org_id: string;
+  actor_id: string;
+  actor_name: string;
+  action: string;
+  label: string;
+  resource_type: string;
+  resource_id: string;
+  status: "ok" | "denied" | "error";
+  ip: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}

@@ -67,6 +67,7 @@ def serialize_project(session: Session, project: Project, *, reconcile: bool = T
         },
         "git_initialized": project.git_initialized,
         "owner_id": project.owner_id or "",
+        "org_id": project.org_id or "",
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
         "meta": project.meta or {},

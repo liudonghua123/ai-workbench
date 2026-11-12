@@ -24,6 +24,24 @@ export function relativeTime(input?: string | null, locale: Locale = "en"): stri
   return new Date(input).toLocaleDateString(DATE_LOCALE[locale]);
 }
 
+/**
+ * Countdown for expiry timestamps. `relativeTime` would answer "12h ago" for a
+ * session that expires in twelve hours, which is exactly backwards.
+ */
+export function untilTime(input?: string | null, locale: Locale = "en"): string {
+  if (!input) return "—";
+  const then = new Date(input).getTime();
+  if (Number.isNaN(then)) return "—";
+  const diff = then - Date.now();
+  const t = (key: MessageKey, vars?: Record<string, string | number>) =>
+    translate(locale, key, vars);
+  const min = 60_000;
+  if (diff <= 0) return t("time.expired");
+  if (diff < 60 * min) return t("time.inMinutes", { n: Math.max(1, Math.round(diff / min)) });
+  if (diff < 24 * 60 * min) return t("time.inHours", { n: Math.round(diff / (60 * min)) });
+  return t("time.inDays", { n: Math.round(diff / (24 * 60 * min)) });
+}
+
 export function clockTime(input?: string | null, locale: Locale = "en"): string {
   if (!input) return "";
   const date = new Date(input);
@@ -113,4 +131,14 @@ export function eventTone(kind: string): string {
   if (kind.includes("agent")) return "var(--accent)";
   if (kind.includes("queued") || kind.includes("creating")) return "var(--warn)";
   return "var(--ink-4)";
+}
+
+/**
+ * ApiError carries the backend's message; anything else gets a stable fallback.
+ * Centralised so panels do not each invent `err instanceof Error ? …` again.
+ */
+export function errorMessage(err: unknown, fallback = "request failed"): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err) return err;
+  return fallback;
 }

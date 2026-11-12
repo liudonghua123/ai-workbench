@@ -31,7 +31,13 @@ mcp = FastMCP(
         "<slug>-dev.<suffix>. Edit with write_project_file / search_project, verify with "
         "start_preview + preview_status (log_tail), then publish_project, which commits, tags "
         "deploy/v<N> and deploys that exact commit. Use git_status / git_diff / git_log before "
-        "touching files you did not write, and git_revert_commit to roll back."
+        "touching files you did not write, and git_revert_commit to roll back.\n\n"
+        "Authorisation: the caller's organization membership decides what these tools may do. "
+        "Call describe_access to see your role and permission set, and check_permission before "
+        "an expensive or destructive step — a 403 means the human you are acting for cannot do "
+        "it either. list_sso_providers / list_org_members are read-only views of the access "
+        "plane; identity providers themselves are configured in the UI (secrets are never "
+        "returned by the API)."
     ),
 )
 
@@ -58,6 +64,9 @@ def _extra_tools() -> None:
             "deployment(preview|production)",
             "commit/tag",
             "agent",
+            "organization > membership(role) > permission",
+            "identity_provider(cas|oauth2|oidc|wecom|dingtalk)",
+            "audit_log",
         ]
         report["tools"] = sorted([*TOOLS, "run_workbench_agent", "workbench_capabilities"])
         return report

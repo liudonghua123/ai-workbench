@@ -16,6 +16,9 @@ class ProjectCreate(BaseModel):
     resources: list[str] = []
     variables: dict[str, str] = {}
     deploy: bool = False
+    # defaults to the caller's active organization
+    org_id: str = ""
+    visibility: str = "organization"  # organization | private
 
 
 class FileWrite(BaseModel):
@@ -88,3 +91,96 @@ class AgentUpsert(BaseModel):
 class AgentRunRequest(BaseModel):
     prompt: str
     project_id: str | None = None
+
+
+# --- identity, organizations, access control -------------------------------
+
+
+class LocalLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+    org_name: str = ""
+
+
+class PasswordChange(BaseModel):
+    current_password: str = ""
+    new_password: str
+
+
+class OrgCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    slug: str = ""
+    description: str = ""
+    plan: str = "team"
+
+
+class OrgUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    plan: str | None = None
+    status: str | None = None
+    settings: dict[str, Any] | None = None
+
+
+class MemberAdd(BaseModel):
+    email: str = ""
+    user_id: str = ""
+    name: str = ""
+    role_key: str = "viewer"
+    title: str = ""
+
+
+class MemberUpdate(BaseModel):
+    role_key: str | None = None
+    status: str | None = None
+    title: str | None = None
+
+
+class RoleUpsert(BaseModel):
+    key: str = ""
+    name: str
+    description: str = ""
+    permissions: list[str] = []
+    rank: int = 20
+
+
+class BindingCreate(BaseModel):
+    user_id: str
+    role_key: str = ""
+    permissions: list[str] = []
+    scope_type: str = "project"
+    scope_id: str = ""
+
+
+class InvitationCreate(BaseModel):
+    email: str
+    role_key: str = "viewer"
+    ttl_days: int = 7
+
+
+class InvitationAccept(BaseModel):
+    token: str
+
+
+class ProviderUpsert(BaseModel):
+    key: str = ""
+    kind: str = "oidc"
+    name: str = ""
+    icon: str = ""
+    enabled: bool = False
+    config: dict[str, Any] = {}
+    secret: dict[str, Any] = {}
+    default_role_key: str = "viewer"
+    auto_create_users: bool = True
+    auto_join: bool = True
+    allowed_domains: list[str] = []
+
+
+class SwitchOrgRequest(BaseModel):
+    org_id: str

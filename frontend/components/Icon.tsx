@@ -38,7 +38,14 @@ type IconName =
   | "shield"
   | "spark"
   | "route"
-  | "clock";
+  | "clock"
+  | "users"
+  | "user"
+  | "building"
+  | "logout"
+  | "key"
+  | "lock"
+  | "ticket";
 
 const PATHS: Record<IconName, string> = {
   dashboard: "M3 3h7v7H3zM14 3h7v4h-7zM14 10h7v11h-7zM3 13h7v8H3z",
@@ -81,6 +88,13 @@ const PATHS: Record<IconName, string> = {
   spark: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z",
   route: "M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM8 17h6a4 4 0 0 0 0-8h-4a4 4 0 0 1 0-8",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 8v5l3 2",
+  users: "M16 19v-1.6A4.4 4.4 0 0 0 11.6 13H6.4A4.4 4.4 0 0 0 2 17.4V19M9 10.2a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2ZM22 19v-1.6a4.4 4.4 0 0 0-3.3-4.2M16 3.2a3.6 3.6 0 0 1 0 6.9",
+  user: "M20 20v-1.7A5.3 5.3 0 0 0 14.7 13H9.3A5.3 5.3 0 0 0 4 18.3V20M12 9.8a3.9 3.9 0 1 0 0-7.8 3.9 3.9 0 0 0 0 7.8Z",
+  building: "M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 9h4a1 1 0 0 1 1 1v11M3 21h18M7.5 8h3M7.5 12h3M7.5 16h3",
+  logout: "M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h9",
+  key: "M14.5 3a6.5 6.5 0 1 0-3.2 12.1L4 22.4 2.6 21l1.9-1.9L3 17.6l1.4-1.4 1.5 1.5 2.2-2.2A6.5 6.5 0 0 0 14.5 3ZM16.5 7.5h.01",
+  lock: "M6 10h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1ZM8 10V7a4 4 0 0 1 8 0v3",
+  ticket: "M3 9V7a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v2a3 3 0 0 0 0 6v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2a3 3 0 0 0 0-6ZM12 6v12",
 };
 
 export function Icon({

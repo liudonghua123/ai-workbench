@@ -12,9 +12,11 @@
 | --- | --- | --- |
 | 可视化创建项目 | 模板目录 + 创建向导（`CreateProjectDialog`） | 模板需声明完整契约 |
 | 约定大于配置 | 目录布局、桶名、域名、端口、环境变量全部由 slug 推导；类型规范写成 `TypeSpec` 数据 | 需要显式"逃生舱"覆盖默认值（`workbench.yaml`） |
-| 系统可扩展 | 四个维度扩展点：Provider / Template / Tool / Agent | 每个扩展点要有稳定契约 |
+| 系统可扩展 | 五个维度扩展点：Provider / Template / Tool / Agent / Identity | 每个扩展点要有稳定契约 |
 | 一套 API 供人机共用 | REST 与 MCP 共用同一批 `system_tools` 函数 | 工具函数签名需同时满足两者 |
 | 分层可替换 | 控制面绝不直接调用云 SDK | 每个云能力要写适配器 |
+| 多租户 + 企业登录 | 组织是租户边界；权限是目录、角色是集合、路由是映射；五种 SSO 走同一个 IdP SPI | 每个请求多两次查询，换来权限即时生效 |
+| 一台机器能跑通全部流程 | 没有 Key 有规则规划器，没有 IdP 有模拟 IdP，没有云有 local Provider | 每层都要有"诚实降级"的实现 |
 
 **核心判断**：这个平台的复杂度不在"创建项目"，而在"创建项目之后要动它"。
 所以真正的架构重心放在三处——资源供应的 Provider 接缝、模板的声明式契约、
@@ -28,31 +30,40 @@
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Frontend (Next.js 15 / App Router)                                 │
 │  /  /projects  /projects/[id]  /templates  /agents  /mcp  /skills   │
-│  纯客户端组件 + fetch 封装（lib/api.ts）                             │
+│  /access  /login  /auth/callback  /invite  /settings  /events       │
+│  纯客户端组件 + fetch 封装（lib/api.ts）+ 会话状态机（lib/session）  │
 └───────────────────────────┬─────────────────────────────────────────┘
-                            │ REST /api/v1
+                            │ REST /api/v1   Bearer wbs_…
 ┌───────────────────────────▼─────────────────────────────────────────┐
+│  中间件  principal_middleware（身份解析 + 路由表判权，覆盖 /mcp）     │
+├─────────────────────────────────────────────────────────────────────┤
 │  API 层  app/api/*            （薄：校验 → 调 service → 序列化）      │
-│  projects / platform / registry / system                            │
+│  auth / orgs / projects / workspace / platform / registry / system  │
 ├─────────────────────────────────────────────────────────────────────┤
 │  服务层 app/services/*        （厚：全部业务逻辑在这里）              │
-│  scaffold      项目生命周期 + 文件树 + 装配                         │
-│  conventions   三类项目规范，可执行的约定（见 §9.1）                 │
-│  templates     模板目录与渲染                                       │
-│  gitops        唯一的 git 接缝：status/log/diff/commit/tag          │
-│  deployments   预览/运行/发布三动词 + 日志流 + 状态机                │
-│  system_tools  人机共用的操作面（REST 与 MCP 的唯一实现）            │
-│  agent_runtime 意图解析 → 工具编排 → 步骤记录                        │
-│  serializers   ORM → API 契约                                       │
+│  identity      登录、JIT 建号、IdP 分组→角色映射、会话               │
+│  audit         谁做了什么、谁被拦了（含来源 IP）                     │
+│  scaffold      项目生命周期 + 文件树 + 装配                          │
+│  conventions   三类项目规范，可执行的约定（见 §9.1）                  │
+│  templates     模板目录与渲染                                        │
+│  gitops        唯一的 git 接缝：status/log/diff/commit/tag           │
+│  deployments   预览/运行/发布三动词 + 日志流 + 状态机                 │
+│  system_tools  人机共用的操作面（REST 与 MCP 的唯一实现）             │
+│  agent_runtime 意图解析 → 工具编排 → 步骤记录                         │
+│  serializers   ORM → API 契约                                        │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Provider SPI  app/providers/base.py  （四类能力的抽象接口）          │
 │  storage  database  domain  deploy                                  │
 │  ↳ 实现：providers/local/{storage,database,domain,deploy}.py        │
 │  ↳ 预览宿主：providers/local/static_host.py（无依赖也能托管）        │
+│  ↳ 身份：providers/auth/{cas,oauth2(OIDC),wecom,dingtalk}.py        │
 ├─────────────────────────────────────────────────────────────────────┤
 │  持久化 app/models.py（SQLModel）+ app/core/db.py                   │
-│  projects / resources / domains / env_vars / deployments            │
-│  mcp_servers / skills / agents / agent_runs / events                │
+│  业务：projects / resources / domains / env_vars / deployments      │
+│        mcp_servers / skills / agents / agent_runs / events          │
+│  身份：users / organizations / roles / memberships / role_bindings  │
+│        identities / identity_providers / sessions / invitations     │
+│        auth_requests / audit_logs                                   │
 └─────────────────────────────────────────────────────────────────────┘
         │                                              │
         ▼                                              ▼
@@ -83,13 +94,32 @@ Skill ─────┼──N:M── Agent ──1:N── AgentRun
 Event （全局事件流，project_id 可空）
 ```
 
+身份与租户是另一棵子树，与业务表只通过 `project.org_id` 相接：
+
+```
+Organization ──1:N── Membership ──N:1── User ──1:N── Session
+      │                 └── role_key ──┐        └──1:N── Identity ──N:1── IdentityProvider
+      │                                │                     （每个 IdP 一个 subject，可多个并存）
+      ├──1:N── Role（含 5 个内置，key 唯一）
+      ├──1:N── RoleBinding（project_id + user_id + role_key，项目级授权）
+      ├──1:N── Invitation（email + role_key + token 摘要 + 过期）
+      ├──1:N── IdentityProvider（kind + config + 状态机）
+      ├──1:N── AuthRequest（一次性 state / nonce / PKCE verifier）
+      └──1:N── AuditLog（actor + action + resource + 结果 + 来源 IP）
+```
+
 设计要点：
 
-- **ID 带前缀**（`proj_ab12cd`）：可安全暴露在 URL 与日志里，一眼看出类型。
+- **ID 带前缀**（`proj_ab12cd`、`org_9372f4d09ee5`、`wbs_…`）：可安全暴露在 URL
+  与日志里，一眼看出类型。
 - **JSON 列而非散列**：`Project.meta` / `ProjectResource.config` / `AgentRun.steps` /
-  `Skill.manifest` 承载自由结构。新增模板选项或 Provider 参数**不需要迁移**。
+  `Skill.manifest` / `IdentityProvider.config` 承载自由结构。新增模板选项、Provider
+  参数或一种 SSO 的字段**都不需要迁移**。
 - **时间统一 UTC**，序列化时才转本地；`created_at` 全部带索引，事件流与列表页靠它排序。
 - **`template_version` 固化在项目上**：模板升级不追溯已创建的项目，避免"昨天还能跑今天跑不起来"。
+- **组织是租户边界，用户不是**：同一个 `User` 可以属于多个组织，身份（`Identity`）挂在
+  用户上而非组织上 —— 换了组织、换了 IdP，人还是同一个人。项目通过 `org_id` 归属，
+  角色通过 `Membership` 授予，两者不在同一行上，删组织不会连坐删用户。
 
 ---
 
@@ -233,9 +263,9 @@ def set_env_var(project_id: str, key: str, value: str, is_secret: bool = False) 
 益处：Agent 能做的事与人能做的事**永远等价**，不存在"UI 有但 MCP 没有"的能力缺口；
 工具行为的测试一次覆盖三条链路。
 
-### 工具清单（29 个）
+### 工具清单（34 个）
 
-按用途分五组，同一份 `TOOLS` 字典同时喂给 REST、MCP 与 Agent：
+按用途分七组，同一份 `TOOLS` 字典同时喂给 REST、MCP 与 Agent：
 
 | 组 | 工具 |
 | --- | --- |
@@ -245,6 +275,7 @@ def set_env_var(project_id: str, key: str, value: str, is_secret: bool = False) 
 | 运行 | `run_project` `deploy_project` `deployment_status` `start_preview` `stop_preview` `preview_status` `publish_project` |
 | 版本 | `git_status` `git_log` `git_diff` `git_commit` `git_restore_file` `git_revert_commit` |
 | 资源 | `list_env_vars` `set_env_var` `query_database` |
+| 身份 | `describe_access` `check_permission` `list_organizations` `list_org_members` `list_sso_providers` |
 
 `describe_workbench` 是给模型用的"说明书"：约定、Provider、模板、规划器、工具清单
 一次给全，省掉三轮试探。`start_preview` / `publish_project` 这类动词之所以也在
@@ -519,33 +550,123 @@ GET /deployments/{id}/stream        text/event-stream
 
 ## 11. 安全与护栏
 
-三个独立开关，默认都朝"本地好用"倾斜，但每一个都能一行配置变严。
+鉴权、SSO、SQL、迁移、回滚五件事彼此独立，但共用一条原则：**边界写在数据里，
+判定点只有一个。**
 
-### 11.1 鉴权：一个中间件，两条协议
+### 11.1 组织、角色与权限内核
+
+传统做法是把角色写进代码（`if role == "admin"`），代价是"再加一种人"必须发版。
+这里反过来：**权限是目录，角色是权限集合，路由是映射表，全部是数据。**
+
+```
+core/permissions.py
+  PERMISSIONS     35 项 domain:action —— 唯一声明处
+  BUILTIN_ROLES   5 个内置角色 = 一组 key，没有继承图
+  ROUTE_RULES     正则 → 权限，按序首个命中
+```
+
+一次请求的判权链路：
 
 ```
 request ──▶ principal_middleware
               ├─ WB_AUTH_ENABLED=false → 匿名 admin，放行（本地默认）
-              ├─ 公开路径（/docs, /system/health, /system/settings）→ 放行
-              ├─ 解析 Bearer / X-Workbench-Token / ?token= → 无匹配则 401
-              ├─ 方法级 RBAC：GET 全放、写需 editor、DELETE 需 admin
-              └─ 写 request.state.principal，路由用 Depends 取
+              ├─ PUBLIC_API_PREFIXES（health / settings / auth/*）→ 放行
+              ├─ Bearer wbs_… → SHA-256 查 Session → 未命中即 401
+              ├─ 装配 principal: user + 钉住的组织 + 有效权限集合
+              │     = expand(Membership.role_key) ∪ expand(RoleBinding.role_key)
+              ├─ permission_for(method, path) → (所需权限, project_id)
+              │     未登记的读只需登录，未登记的写一律回落 system:manage（fail closed）
+              ├─ 缺权限 → 先写审计，再 403
+              └─ set_principal / set_client_ip 到 ContextVar，交给处理器
 ```
 
-为什么放在**中间件**而不是依赖：`/mcp` 是 `app.mount("/")` 挂进来的独立 ASGI
-应用，依赖注入管不到它。中间件在挂载之前执行，于是 REST 与 MCP 共用同一套策略 ——
-不会出现"REST 要 token、MCP 裸奔"的经典漏洞。
+处理器再判一次（`_require`），因为路径里的组织可能不是会话钉住的那个：
 
-令牌存环境变量（`WB_AUTH_TOKENS="token:name:role"`）而不是数据库：无状态、重启即
-生效、不需要迁移。代价是轮换要重启，这在单机工作台的规模下是划算的。
+```python
+org, membership = _require(session, principal, org_id_from_url, "member:manage")
+```
 
-**归属隔离**：`Project.owner_id` 记录创建者；非 admin 的 list 过滤、get/delete
-对非本人项目返回 **404 而不是 403** —— 不泄露"这个 id 存在"这一事实。
+**为什么是两层而不是一层。** 中间件看得到路径，看不到语义：`POST
+/orgs/{id}/members` 的 `{id}` 是不是我的组织，只有处理器知道。中间件负责"这套
+API 该不该给这个权限"，处理器负责"这个资源是不是你的"。少任何一层都会出现漏判。
 
-前端侧：`lib/auth.ts` 存 token，`lib/api.ts` 统一附带 header；任何 401 派发
-`wb:unauthorized`，`TokenGate` 收到后弹一次解锁框。**一个提示，而不是 N 个烂页面。**
+**为什么中间件是唯一可行的挂载点。** `/mcp` 是 `app.mount("/")` 挂进来的独立
+ASGI 应用，依赖注入管不到它；中间件在挂载之前执行，于是 REST 与 MCP 共用同一套
+身份解析 —— 不会出现"REST 要登录、MCP 裸奔"的经典漏洞。但 MCP 是一条长连接，
+一个 `POST /mcp` 里可能连发十个工具调用，路径判权看不出这次到底想干什么，所以
+MCP 侧在**工具层**再判一次（§6）：`TOOL_PERMISSIONS` 把每个工具映射到一项权限，
+`_guard()` 用 ContextVar 里的调用者主体展开判定。
 
-### 11.2 SQL 护栏：白名单 + 逃生舱黑名单
+> 「An agent may do exactly what the human who invoked it may do.」
+> —— Agent 不是超级用户，它是调用者的一个代理。同一个 `write_project_file`，
+> 开发者调得通、只读用户调不通，与 REST 上的结论完全一致。
+
+**404 而不是 403。** 处理器发现组织或项目不属于主体时返回 404 —— 403 等于承认
+"这个 id 存在"，可以拿来枚举别家组织。
+
+**拒绝也要留痕。** 审计写入发生在 403 抛出之前，所以"谁在什么时候被什么规则挡住"
+是能查的，而不只是"成功操作列表"。
+
+**权限集是每次请求重算的**，不塞进 JWT、不缓存在会话行上。代价是每个请求多两次
+查询，换来的是"收回权限立刻生效"——对一个能部署生产的环境，这个交换永远划算。
+
+**内置角色用通配符表达**，`owner` 就是一个 `*`：目录从 35 项长到 80 项时它自动
+跟上，不会像手写列表那样腐化。自定义角色存的是展开后的具体 key，导出/审阅时一眼
+能读完。
+
+前端不重复实现这套逻辑：`/permissions` 返回目录与角色，`lib/access.ts` 负责把
+grant 展开成集合，`can()` 只问"我的集合里有没有这一项"。导航栏、按钮、标签页
+的显隐与后端是同一条判定 —— **藏起来的按钮背后，接口也真的会拒。**
+
+### 11.2 SSO：五条流程，一条代码路径
+
+CAS / OAuth2 / OIDC / 企微 / 钉钉的握手细节完全不同，但形状一样：跳到对方、回来
+带个 code、换出"你是谁"。
+
+```python
+class IdP(ABC):
+    kind: str
+    SCHEMA: dict          # 字段声明 —— 界面表单由它渲染
+    def authorize_url(self, ctx) -> str: ...
+    def exchange(self, code, ctx) -> ExternalProfile: ...
+```
+
+`SCHEMA` 是这里最关键的设计：`label/help` 中英双语、`type` 是
+`text|password|select|json|switch|list`、`required`、`secret`（回显时打码，空值
+表示"保留原值"）。加一种 IdP = 一个类 + 一个 SCHEMA，**前端一行都不用改**。
+
+```
+GET  /auth/providers/{key}/start   → 建 AuthRequest(state, nonce, verifier)，302 到 IdP
+GET  /auth/{kind}/callback?code&state
+        ├─ state 一次性消费（CAS 除外：它藏在 service URL 里）
+        ├─ exchange → ExternalProfile(subject, email, name, groups, raw)
+        ├─ 找 Identity(subject) → 有则登录
+        ├─ 无则 JIT 建号：email 命中既有用户就绑定，否则新建 User
+        ├─ 角色 = config.role_map 命中 groups 中 rank 最高的那个，否则 default_role
+        └─ 302 到 {WB_FRONTEND_URL}/auth/callback#token=wbs_…（放进 fragment，不上服务器）
+```
+
+各家的坑，都在各自的 provider 里处理完了：
+
+| 类型 | 必须处理的事 |
+| --- | --- |
+| OIDC | 走 discovery 拿 `jwks_uri`，只认 RS256/ES256；`alg=none` 直接拒；校验 `iss`/`aud`/`nonce`；userinfo 只是加分项，身份以 `id_token` 为准 |
+| OAuth2 | 授权串用 `urlencode` 拼接而非 `params=`（后者会整串替换掉 `redirect_uri`）；只有对方声明支持时才带 PKCE |
+| CAS | state 塞进 `service` 的 query —— CAS 协议本身没有 state 参数；`p3/` 前缀按版本切换；用户字段若是 "proxy ticket"/"service ticket" 字样一律拒，防票据注入 |
+| 企微 | 扫码用 `login.work.weixin.qq.com/wwlogin/sso/login`，企微内打开用 `open.weixin.qq.com/connect/oauth2/authorize`，按 UA 选；`auth/getuserinfo` 拿到 `userid` 后再 `user/get` 补全资料 |
+| 钉钉 | `api.dingtalk.com/v1.0/oauth2/userAccessToken` 换 token，再带 `x-acs-dingtalk-access-token` 请求 `contact/users/me`；主体取 `unionId` 而不是 `userId`（换应用不换人） |
+
+**连接是有状态的**：`unchecked`（存过但没验过）→ `ready`（探测通过）/
+`error`（探测失败），另有 `enabled` 开关。只有真发过一次请求的连接才允许显示
+`ready` —— 界面上"绿色的 SSO"必须意味着"现在能登"，否则这个绿灯毫无意义。
+
+**探测不写库外的东西**：它只做 discovery / authorize URL 构造 / app token 获取，
+不会真的登一个用户进来，所以可以在生产上随手点。
+
+纯 SSO 部署怎么起第一个管理员？`WB_AUTH_BOOTSTRAP_TOKEN`：带着它可以直接调
+`/orgs` 建组织并成为 owner，用完即撤。见 [docs/access.md](access.md)。
+
+### 11.3 SQL 护栏：白名单 + 逃生舱黑名单
 
 数据库控制台连的是真实 sqlite 文件，所以"用户写什么就执行什么"是明显的坑。护栏
 不写 SQL 解析器，用两步：
@@ -563,7 +684,7 @@ request ──▶ principal_middleware
 
 `WB_SQL_MODE=write` 放开语句类型限制，但黑名单永远生效。
 
-### 11.3 前向兼容迁移
+### 11.4 前向兼容迁移
 
 `SQLModel.metadata.create_all` 不会 ALTER 已存在的表，于是"给 `Project` 加一列"
 在已有库上会静默炸掉所有 select。`core/migrate.py` 在启动时补齐：
@@ -575,7 +696,7 @@ inspect(engine) → 对比 COLUMNS 声明 → ALTER TABLE ... ADD COLUMN → 建
 规则只有一条：**只加，不改，不删**。需要重命名就新增一列 + 双写 + 后续清理，
 真正的迁移工具（Alembic）留到多副本部署时再上。
 
-### 11.4 创建回滚
+### 11.5 创建回滚
 
 项目创建横跨四个 Provider，任何一步失败都不能留下半套云资源：
 
@@ -656,7 +777,10 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 | 换模型供应商 | 设 `WB_LLM_BASE_URL` / `WB_LLM_MODEL` | 否 |
 | 换 Agent 框架 | 继承 `Harness` + `register_harness` | 否 |
 | 放开 SQL 写入 | `WB_SQL_MODE=write` | 否 |
-| 加角色 / 令牌 / 改权限策略 | `core/security.py` + `WB_AUTH_TOKENS` | 否 |
+| 加角色 | `/access` 的角色编辑器，写库即生效 | 否 |
+| 加一项权限 | `core/permissions.py` 的 `_RAW` 加一行 + 需要它的路由改 `ROUTE_RULES` | 否（勾选表、`can()`、Agent 的 `check_permission` 同步） |
+| 接入一种 SSO | `providers/auth/` 加一个 `IdP` 子类 + `SCHEMA`，在 `__init__.py` 注册 | 否（表单按 SCHEMA 渲染） |
+| 改判权策略 | 只动 `ROUTE_RULES`，中间件与处理器都不必改 | 否 |
 | 接入 Web 版 VS Code | 设 `WB_IDE_URL_TEMPLATE` | 否（自动切 iframe） |
 | 加一门语言 | `lib/i18n.tsx` 加一个对象 + `LOCALES` 一项 | 否 |
 | 加一种资源类型（如 Redis） | `ResourceKind` 加枚举 + Provider 新能力 + 模板声明 | 是（资源表格渲染） |
@@ -671,7 +795,10 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 
 | 限制 | 现状 | 建议 |
 | --- | --- | --- |
-| 角色是全局的 | `viewer/editor/admin` 作用于整个实例 | 加 `ProjectMember` 表，把 `check_method` 换成按项目判定 |
+| 没有单资源 ACL | 授权只到组织级与项目级，再往下（某个文件、某个环境变量）没有独立主体 | 需要时加资源级 `Binding(resource_type, resource_id)`，复用同一套 `expand()` |
+| 没有 SCIM / 离职同步 | IdP 里删人，这里不知道；要等会话过期或人工停用 | 接 SCIM 2.0 的 `/Users` 与 `/Groups`，或周期性拉取 IdP 目录做对账 |
+| 分组映射依赖 IdP 发 groups | `role_map` 只在 IdP 真的返回分组声明时生效 | 对不发的 IdP（如部分企微配置）改用部门映射；或在登录后额外调一次目录接口补全 |
+| 会话不可跨实例撤销 | 撤销靠删 `Session` 行，多副本共享库才生效 | 已经是库表，多副本天然可用；单机场景无需额外处理 |
 | SQL 护栏非解析器 | 首关键字白名单，`WITH ... DELETE` 会被误拒 | 引入 sqlglot 做 AST 级判定；只读连接（`PRAGMA query_only`）双保险 |
 | 部署串行化仅进程内 | 多副本部署时 `_RUN_LOCKS` 各管各的 | 活跃部署改为数据库唯一约束（partial unique index） |
 | 项目创建非事务 | 已加补偿回滚，但非原子 | Provider 侧提供两阶段（prepare/commit）能力 |
@@ -691,28 +818,35 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 backend/
   app/
     main.py              应用装配（CORS、鉴权中间件、路由、MCP 挂载、种子数据）
-    models.py            9 张表
+    models.py            21 张表
     schemas.py           请求/响应契约
-    core/                config(全部 WB_* 配置) / db / security(令牌+RBAC)
-                         migrate(前向兼容) / errors / ids
-    api/                 projects / workspace / platform / registry / system
-    services/            conventions(类型规范) / scaffold / templates
+    core/                config(全部 WB_* 配置) / db / security(主体解析+会话)
+                         permissions(目录+内置角色+路由表) / passwords(scrypt)
+                         context(主体与来源 IP 的 ContextVar) / migrate / errors / ids
+    api/                 auth / orgs / projects / workspace / platform / registry / system
+    services/            identity(登录·JIT·角色映射) / audit(含拒绝记录)
+                         conventions(类型规范) / scaffold / templates
                          gitops(唯一 git 接缝) / deployments / system_tools
                          agent_runtime(local+llm harness) / llm / sql_guard
                          serializers
     providers/           base(SPI+registry) + local/{storage,database,domain,deploy}
                          local/static_host(无依赖也能托管的预览宿主)
+                         auth/{base,cas,oauth2(OIDC),wecom,dingtalk}
     mcp/server.py        fastmcp 服务端，与 REST 同端口
-  tools/mock_llm.py      离线验证 LLM 链路的假端点（OpenAI 兼容）
+  tools/                 mock_llm(假模型端点) / auth_smoke(41 条判权断言)
+                         access_demo(用公开 API 造一个像样的组织)
 frontend/
-  app/                   11 个路由（含 /projects/[id] 八标签页、/settings）
-  components/            Shell(导航布局) / Rail / Topbar / NavLinks
-                         Preferences(语言·主题·导航) / TokenGate(401 解锁)
+  app/                   13 个路由（含 /projects/[id] 八标签页、/access、/login）
+  components/            Shell(导航布局) / Rail / Topbar / NavLinks / SessionMenu
+                         Preferences(语言·主题·导航) / AuthGate(未登录重定向)
+                         access/*Panel(成员·角色·SSO·审计·设置)
                          CreateProjectDialog / LogViewer / ProjectCard
                          CodeEditor(textarea+高亮 pre，零依赖) / Icon(全 SVG) / ui
-  lib/                   api / auth(token) / types / format(状态映射)
-                         i18n(类型化字典) / prefs(布局偏好) / nav(单一真相源)
+  lib/                   api / session(主体状态机) / access(权限展开与文案)
+                         auth(令牌存取) / types / format(状态映射) / i18n(类型化字典)
+                         prefs(布局偏好) / nav(单一真相源)
 docs/architecture.md     本文档
+docs/access.md           RBAC / 组织 / SSO 运维手册
 docs/conventions/        三类项目规范 + 约定大于配置的设计说明
 scripts/shoot.mjs        端到端走查 + 截图脚本
 data/                    运行时生成（已 gitignore）

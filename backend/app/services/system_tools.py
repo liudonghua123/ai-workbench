@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from app.core import permissions as permission_catalog
 from app.core.config import settings
 from app.core.db import engine
 from app.core.errors import NotFoundError, ValidationFailed  # noqa: F401  (re-exported for MCP wrappers)
@@ -83,6 +84,19 @@ def describe_workbench() -> dict[str, Any]:
         "templates": [spec.key for spec in scaffold.templates().list()],
         "agent_harness": llm.effective_harness(),
         "sql_mode": settings.sql_mode,
+        "access": {
+            "auth_enabled": settings.auth_enabled,
+            "model": "organization -> membership role -> permission set (+ project bindings)",
+            "builtin_roles": [role.key for role in permission_catalog.BUILTIN_ROLES],
+            "permissions": permission_catalog.ALL_PERMISSIONS,
+            "tools_requiring_permission": TOOL_PERMISSIONS,
+            "note": "Agent 继承调用者权限：describe_access 查看，check_permission 预检",
+        },
+        "sso": {
+            "kinds": ["cas", "oauth2", "oidc", "wecom", "dingtalk", "mock"],
+            "login_path": f"{settings.api_prefix}/auth/{{provider}}/start",
+            "callback_path": f"{settings.api_prefix}/auth/{{provider}}/callback",
+        },
         "project_count": project_count,
         "tools": sorted(TOOLS),
     }
@@ -507,6 +521,139 @@ def run_agent(agent_key: str, prompt: str, project_id: str | None = None) -> dic
     return run(agent_key, prompt, project_id=project_id)
 
 
+def describe_access() -> dict[str, Any]:
+    """Who am I, which permissions do I hold, and what can I not do in this org."""
+    from app.core import context, permissions as permission_catalog
+
+    principal = context.current_principal()
+    if principal is None:
+        return {"authenticated": False, "note": "无请求上下文（离线调用）"}
+    payload = principal.to_dict()
+    payload["authenticated"] = not principal.anonymous
+    payload["may"] = {
+        perm: principal.has(perm)
+        for perm in ("project:create", "project:delete", "code:write",
+                     "deploy:run", "deploy:publish", "member:manage",
+                     "role:manage", "sso:manage", "org:delete")
+    }
+    payload["catalog"] = permission_catalog.describe()
+    return payload
+
+
+def list_organizations() -> list[dict[str, Any]]:
+    """Organizations the current caller can see, with their role in each."""
+    from app.core import context
+    from app.models import Membership, MemberStatus, Organization
+    from app.services import identity
+
+    principal = context.current_principal()
+    with Session(engine) as session:
+        if principal is not None and not principal.anonymous and not principal.is_platform_admin:
+            rows = [session.get(Organization, ref.id) for ref in principal.orgs]
+        else:
+            rows = session.exec(select(Organization)).all()
+        items: list[dict[str, Any]] = []
+        for org in [row for row in rows if row is not None]:
+            members = session.exec(
+                select(Membership).where(
+                    Membership.org_id == org.id, Membership.status == MemberStatus.ACTIVE
+                )
+            ).all()
+            role = next(
+                (ref.role_key for ref in (principal.orgs if principal else ()) if ref.id == org.id),
+                "",
+            )
+            items.append(
+                identity.serialize_org(org, role_key=role, counts={"members": len(members)})
+            )
+        return items
+
+
+def list_org_members(org_id: str = "") -> list[dict[str, Any]]:
+    """Members of an organization (defaults to the caller's active organization)."""
+    from app.core import context
+    from app.models import Membership, MemberStatus, Organization, User
+    from app.services import identity
+
+    principal = context.current_principal()
+    target = org_id or (principal.org_id if principal else "")
+    if not target:
+        raise ValidationFailed("需要指定 org_id")
+    with Session(engine) as session:
+        if session.get(Organization, target) is None:
+            raise NotFoundError(f"组织不存在: {target}")
+        rows = session.exec(
+            select(Membership).where(
+                Membership.org_id == target, Membership.status == MemberStatus.ACTIVE
+            )
+        ).all()
+        items: list[dict[str, Any]] = []
+        for membership in rows:
+            user = session.get(User, membership.user_id)
+            if user is None:
+                continue
+            payload = identity.serialize_user(user, membership)
+            items.append(
+                {
+                    "id": payload["id"],
+                    "email": payload["email"],
+                    "name": payload["name"],
+                    "role_key": payload["role_key"],
+                    "title": membership.title,
+                    "status": payload["status"],
+                }
+            )
+        return items
+
+
+def list_sso_providers(org_id: str = "") -> dict[str, Any]:
+    """Which identity sources exist, and which fields a new one still needs."""
+    from app.core import context
+    from app.models import IdentityProvider, Organization
+    from app.providers import auth as auth_providers
+    from app.services import identity
+
+    principal = context.current_principal()
+    target = org_id or (principal.org_id if principal else "")
+    with Session(engine) as session:
+        configured = []
+        if target:
+            rows = session.exec(
+                select(IdentityProvider).where(IdentityProvider.org_id == target)
+            ).all()
+            configured = [identity.serialize_provider(row) for row in rows]
+        return {
+            "org_id": target,
+            "configured": configured,
+            "supported_kinds": [
+                {
+                    "kind": kind,
+                    "label": schema["label"],
+                    "required": [f["key"] for f in schema["fields"] if f.get("required")],
+                    "secret_fields": [f["key"] for f in schema["secrets"]],
+                }
+                for kind, schema in auth_providers.SCHEMA.items()
+            ],
+        }
+
+
+def check_permission(permission: str, project_id: str = "") -> dict[str, Any]:
+    """Ask before acting: does the caller hold ``permission`` (optionally on one project)."""
+    from app.core import context
+
+    principal = context.current_principal()
+    if principal is None:
+        return {"permission": permission, "allowed": True, "note": "无请求上下文"}
+    allowed = principal.has(permission, project_id or None)
+    return {
+        "permission": permission,
+        "project_id": project_id,
+        "allowed": allowed,
+        "role": principal.role,
+        "reason": "" if allowed else f"角色 {principal.role} 在组织内没有 {permission}",
+    }
+
+
 TOOLS: dict[str, Any] = {
     "describe_workbench": describe_workbench,
     "list_templates": list_templates,
@@ -542,7 +689,76 @@ TOOLS: dict[str, Any] = {
     "query_database": query_database,
     "add_domain": add_domain,
     "list_agents": list_agents,
+    # access control
+    "describe_access": describe_access,
+    "check_permission": check_permission,
+    "list_organizations": list_organizations,
+    "list_org_members": list_org_members,
+    "list_sso_providers": list_sso_providers,
 }
 
 
-__all__ = ["TOOLS", *TOOLS]
+# --------------------------------------------------------------------------
+# authorisation
+# --------------------------------------------------------------------------
+
+# Tool name -> permission. Anything not listed runs for any authenticated caller
+# (read-only helpers). Keeping this next to the registry means a new mutating tool
+# without a permission is caught by review, not by an incident.
+TOOL_PERMISSIONS: dict[str, str] = {
+    "create_project": "project:create",
+    "publish_project": "deploy:publish",
+    "run_project": "deploy:run",
+    "deploy_project": "deploy:run",
+    "start_preview": "deploy:run",
+    "stop_preview": "deploy:run",
+    "write_project_file": "code:write",
+    "delete_project_file": "code:write",
+    "git_commit": "code:write",
+    "git_restore_file": "code:write",
+    "git_revert_commit": "deploy:rollback",
+    "set_env_var": "env:write",
+    "query_database": "data:read",
+    "add_domain": "domain:manage",
+    "list_org_members": "member:read",
+    "list_sso_providers": "sso:read",
+}
+
+
+def _guard(tool: str, project_id: str | None) -> None:
+    """An agent may do exactly what the human who invoked it may do."""
+    from app.core import context
+    from app.core.config import settings
+    from app.core.errors import ForbiddenError
+
+    principal = context.current_principal()
+    if principal is None:
+        if settings.auth_enabled:
+            raise ForbiddenError("缺少调用者身份，拒绝执行")
+        return
+    needed = TOOL_PERMISSIONS.get(tool)
+    if needed and not principal.has(needed, project_id):
+        raise ForbiddenError(f"调用者角色 {principal.role} 缺少权限 {needed}（工具 {tool}）")
+
+
+def _guarded(name: str, fn: Any) -> Any:
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        project_id = kwargs.get("project_id")
+        if not project_id:
+            for value in args:
+                if isinstance(value, str) and value.startswith("proj_"):
+                    project_id = value
+                    break
+        _guard(name, project_id)
+        return fn(*args, **kwargs)
+
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
+
+
+TOOLS = {name: _guarded(name, fn) for name, fn in TOOLS.items()}
+
+__all__ = ["TOOLS", "TOOL_PERMISSIONS", *TOOLS]

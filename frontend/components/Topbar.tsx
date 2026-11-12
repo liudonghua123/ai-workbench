@@ -6,16 +6,23 @@ import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import { Preferences } from "./Preferences";
+import { SessionMenu } from "./SessionMenu";
 import { TopNav } from "./NavLinks";
 import { api, API_BASE } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { NAV } from "@/lib/nav";
 import { usePrefs } from "@/lib/prefs";
+import { useSession } from "@/lib/session";
 
 export function Topbar() {
   const { t } = useI18n();
   const { nav } = usePrefs();
+  const { can, loading, me } = useSession();
   const [open, setOpen] = useState(false);
+
+  // authority is unknown until the session resolves; showing the button and
+  // hiding it a moment later is worse than showing it late
+  const mayCreate = !loading && (can("project:create") || !me);
 
   return (
     <header className="topbar">
@@ -35,11 +42,14 @@ export function Topbar() {
 
       <div className="topbar-actions">
         <ApiStatus />
+        <SessionMenu />
         <Preferences />
-        <button className="btn btn-primary" onClick={() => setOpen(true)}>
-          <Icon name="plus" size={14} />
-          {t("topbar.newApp")}
-        </button>
+        {mayCreate ? (
+          <button className="btn btn-primary" onClick={() => setOpen(true)}>
+            <Icon name="plus" size={14} />
+            {t("topbar.newApp")}
+          </button>
+        ) : null}
       </div>
 
       <CreateProjectDialog open={open} onClose={() => setOpen(false)} />

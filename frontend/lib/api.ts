@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentRun,
+  AuditRow,
   ConventionReport,
   Deployment,
   DomainBinding,
@@ -10,17 +11,29 @@ import type {
   GitDiff,
   GitStatus,
   HarnessReport,
+  IdentityProvider,
+  Invitation,
   LlmStatus,
   LlmTest,
+  LinkedIdentity,
   McpServer,
   Me,
+  OrgMember,
+  Organization,
+  OrgRole,
   Overview,
+  PermissionCatalog,
   PreviewState,
+  ProbeResult,
   Project,
+  ProviderDirectory,
   PublishResult,
+  RoleBinding,
+  SessionMe,
   Settings,
   Skill,
   SqlMode,
+  SsoSchema,
   Template,
   TreeNode,
 } from "./types";
@@ -204,4 +217,87 @@ export const api = {
   runAgent: (key: string, prompt: string, projectId?: string) =>
     post<AgentRun>(`/agents/${key}/run`, { prompt, project_id: projectId ?? null }),
   agentRuns: () => request<AgentRun[]>("/agent-runs"),
+
+  // --- authentication ------------------------------------------------------
+  loginProviders: () => request<ProviderDirectory>("/auth/providers"),
+  startSso: (key: string, returnTo = "/") =>
+    request<{ authorize_url: string; state: string; redirect_uri: string }>(
+      `/auth/${key}/start?return_to=${encodeURIComponent(returnTo)}`,
+    ),
+  localLogin: (email: string, password: string) =>
+    post<{ token: string; user: OrgMember; org: Organization; expires_in: number }>(
+      "/auth/local/login",
+      { email, password },
+    ),
+  signup: (payload: { email: string; password: string; name?: string; org_name?: string }) =>
+    post<{ token: string; user: OrgMember; org: Organization }>("/auth/signup", payload),
+  sessionMe: () => request<SessionMe>("/auth/me"),
+  logout: () => post<{ ok: boolean }>("/auth/logout"),
+  switchOrg: (orgId: string) =>
+    post<{ ok: boolean; org_id: string; slug: string; role_key: string }>("/auth/switch-org", {
+      org_id: orgId,
+    }),
+  revokeSession: (id: string) => del(`/auth/sessions/${id}`),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<{ ok: boolean; note: string }>("/auth/password", {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+
+  // --- organizations & access control --------------------------------------
+  orgs: () => request<Organization[]>("/orgs"),
+  org: (id: string) => request<Organization>(`/orgs/${id}`),
+  createOrg: (payload: { name: string; slug?: string; description?: string; plan?: string }) =>
+    post<Organization>("/orgs", payload),
+  updateOrg: (id: string, payload: Partial<Organization>) => patch<Organization>(`/orgs/${id}`, payload),
+  removeOrg: (id: string, purge = false) => del(`/orgs/${id}?purge_projects=${purge}`),
+
+  members: (orgId: string) => request<OrgMember[]>(`/orgs/${orgId}/members`),
+  addMember: (orgId: string, payload: { email?: string; user_id?: string; role_key: string; title?: string }) =>
+    post<OrgMember & { invited?: boolean; accept_token?: string; invitation?: Invitation }>(
+      `/orgs/${orgId}/members`,
+      payload,
+    ),
+  updateMember: (orgId: string, memberId: string, payload: { role_key?: string; status?: string; title?: string }) =>
+    patch<OrgMember>(`/orgs/${orgId}/members/${memberId}`, payload),
+  removeMember: (orgId: string, memberId: string) => del(`/orgs/${orgId}/members/${memberId}`),
+  resetMemberPassword: (orgId: string, memberId: string) =>
+    post<{ ok: boolean; temporary_password: string }>(
+      `/orgs/${orgId}/members/${memberId}/reset-password`,
+    ),
+
+  invitations: (orgId: string) => request<Invitation[]>(`/orgs/${orgId}/invitations`),
+  invite: (orgId: string, payload: { email: string; role_key: string; ttl_days?: number }) =>
+    post<Invitation>(`/orgs/${orgId}/invitations`, payload),
+  revokeInvitation: (orgId: string, id: string) => del(`/orgs/${orgId}/invitations/${id}`),
+  acceptInvitation: (token: string) =>
+    post<{ ok: boolean; org: Organization | null; role_key: string }>("/invitations/accept", { token }),
+
+  roles: (orgId: string) => request<OrgRole[]>(`/orgs/${orgId}/roles`),
+  createRole: (orgId: string, payload: { name: string; key?: string; description?: string; permissions: string[]; rank?: number }) =>
+    post<OrgRole>(`/orgs/${orgId}/roles`, payload),
+  updateRole: (orgId: string, roleId: string, payload: { name: string; description?: string; permissions: string[]; rank?: number }) =>
+    patch<OrgRole>(`/orgs/${orgId}/roles/${roleId}`, payload),
+  removeRole: (orgId: string, roleId: string) => del(`/orgs/${orgId}/roles/${roleId}`),
+  permissionCatalog: () => request<PermissionCatalog>("/permissions"),
+
+  bindings: (orgId: string) => request<RoleBinding[]>(`/orgs/${orgId}/bindings`),
+  createBinding: (orgId: string, payload: { user_id: string; role_key?: string; permissions: string[]; scope_type?: string; scope_id: string }) =>
+    post<{ id: string }>(`/orgs/${orgId}/bindings`, payload),
+  removeBinding: (orgId: string, id: string) => del(`/orgs/${orgId}/bindings/${id}`),
+
+  ssoProviders: (orgId: string) => request<IdentityProvider[]>(`/orgs/${orgId}/sso`),
+  ssoSchema: (orgId: string) => request<SsoSchema>(`/orgs/${orgId}/sso/schema`),
+  createSso: (orgId: string, payload: Record<string, unknown>) =>
+    post<IdentityProvider>(`/orgs/${orgId}/sso`, payload),
+  updateSso: (orgId: string, id: string, payload: Record<string, unknown>) =>
+    patch<IdentityProvider>(`/orgs/${orgId}/sso/${id}`, payload),
+  removeSso: (orgId: string, id: string) => del(`/orgs/${orgId}/sso/${id}`),
+  probeSso: (orgId: string, id: string) => post<ProbeResult>(`/orgs/${orgId}/sso/${id}/probe`),
+
+  orgAudit: (orgId: string, limit = 100) =>
+    request<AuditRow[]>(`/orgs/${orgId}/audit?limit=${limit}`),
+  platformAudit: (limit = 100) => request<AuditRow[]>(`/audit?limit=${limit}`),
+  searchUsers: (q = "") => request<OrgMember[]>(`/users?q=${encodeURIComponent(q)}`),
+  userIdentities: (userId: string) => request<LinkedIdentity[]>(`/users/${userId}/identities`),
 };

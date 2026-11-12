@@ -8,35 +8,43 @@ import { api } from "@/lib/api";
 import { cx } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { isActive, NAV, NAV_GROUPS } from "@/lib/nav";
+import { useSession } from "@/lib/session";
 
 /** Sidebar variant: grouped, labelled, with per-section counts. */
 export function RailNav() {
   const { t } = useI18n();
   const pathname = usePathname();
   const counts = useCounts();
+  const entries = useVisibleNav();
 
   return (
     <nav className="nav">
-      {NAV_GROUPS.map((groupKey) => (
-        <div key={groupKey}>
-          <div className="nav-label">{t(groupKey)}</div>
-          {NAV.filter((entry) => entry.groupKey === groupKey).map((entry) => {
-            const active = isActive(pathname, entry.href);
-            return (
-              <Link
-                key={entry.href}
-                href={entry.href}
-                className={cx("nav-item", active && "active")}
-                title={t(entry.labelKey)}
-              >
-                <Icon name={entry.icon} size={16} />
-                <span>{t(entry.labelKey)}</span>
-                {counts[entry.href] ? <span className="nav-count">{counts[entry.href]}</span> : null}
-              </Link>
-            );
-          })}
-        </div>
-      ))}
+      {NAV_GROUPS.map((groupKey) => {
+        const group = entries.filter((entry) => entry.groupKey === groupKey);
+        if (!group.length) return null;
+        return (
+          <div key={groupKey}>
+            <div className="nav-label">{t(groupKey)}</div>
+            {group.map((entry) => {
+              const active = isActive(pathname, entry.href);
+              return (
+                <Link
+                  key={entry.href}
+                  href={entry.href}
+                  className={cx("nav-item", active && "active")}
+                  title={t(entry.labelKey)}
+                >
+                  <Icon name={entry.icon} size={16} />
+                  <span>{t(entry.labelKey)}</span>
+                  {counts[entry.href] ? (
+                    <span className="nav-count">{counts[entry.href]}</span>
+                  ) : null}
+                </Link>
+              );
+            })}
+          </div>
+        );
+      })}
     </nav>
   );
 }
@@ -46,10 +54,11 @@ export function TopNav() {
   const { t } = useI18n();
   const pathname = usePathname();
   const counts = useCounts();
+  const entries = useVisibleNav();
 
   return (
     <nav className="topnav" aria-label={t("prefs.navigation")}>
-      {NAV.map((entry) => {
+      {entries.map((entry) => {
         const active = isActive(pathname, entry.href);
         return (
           <Link
@@ -66,6 +75,16 @@ export function TopNav() {
       })}
     </nav>
   );
+}
+
+/**
+ * Drops entries the session may not use. Purely cosmetic: the API rejects the
+ * request anyway, and the refusal is written to the audit log.
+ */
+function useVisibleNav() {
+  const { can, loading, me } = useSession();
+  if (loading || !me) return NAV;
+  return NAV.filter((entry) => !entry.permission || can(entry.permission));
 }
 
 /** Counts come from one overview call and are shared by both nav layouts. */

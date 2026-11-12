@@ -19,7 +19,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 def _load(session: Session, project_id: str, principal: Principal):
     project = scaffold.get_project(session, project_id)
-    if not can_access(principal, project.owner_id):
+    if not can_access(principal, project.owner_id, project.org_id):
         # do not leak existence across owners
         raise NotFoundError(f"项目不存在: {project_id}")
     return project
@@ -31,7 +31,7 @@ def list_projects(
     principal: Principal = Depends(get_principal),
 ):
     projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()  # type: ignore[attr-defined]
-    visible = [p for p in projects if can_access(principal, p.owner_id)]
+    visible = [p for p in projects if can_access(principal, p.owner_id, p.org_id)]
     return [serialize_project(session, p) for p in visible]
 
 
@@ -52,10 +52,12 @@ def create_project(
             resources=payload.resources,
             variables=payload.variables,
             deploy=payload.deploy,
+            org_id=payload.org_id or principal.org_id,
+            owner_id=principal.email or principal.user_id or principal.name,
         ),
     )
     if not principal.anonymous:
-        project.owner_id = principal.name
+        project.owner_id = principal.email or principal.user_id or principal.name
         session.add(project)
         session.commit()
         session.refresh(project)

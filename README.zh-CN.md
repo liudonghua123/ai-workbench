@@ -31,7 +31,8 @@ AI 工作台就是这套接口。你可视化创建项目，平台按约定自�
 | **MCP / Skills / Agents** | 三者都是一等公民，以数据形式存储、可视化增删改 |
 | **真 Agent，也可离线** | 规划器可插拔：配一个 OpenAI 兼容端点，Agent 就真的在工具调用上推理；没有 Key 时自动退回规则规划器 |
 | **有护栏的数据库控制台** | 默认只读：语句白名单 + `ATTACH` / `load_extension` / `writable_schema` 黑名单 |
-| **可选令牌鉴权** | `viewer` / `editor` / `admin` 三种角色，一个中间件同时管 REST 与 `/mcp`；本地默认关闭 |
+| **组织 + 完整 RBAC** | 35 项权限目录上的五个内置角色、自定义角色、项目级授权、邀请、停用、审计流水 —— 一张路由表同时守住 REST 与 `/mcp` |
+| **SSO：CAS / OAuth2 / OIDC / 企微 / 钉钉** | 每种连接都是数据，在界面上配置、用真实探测验证；首次登录即建号，支持 IdP 分组到角色的映射 |
 | **约定大于配置** | 三类项目规范文档（全栈 / 纯前端 / 纯后端）同时驱动脚手架、合规报告、预览命令与 Agent 提示词，只有一份定义 |
 | **云可替换** | 存储 / 数据库 / DNS / 部署统一在 Provider SPI 之后，换云只改一个环境变量 |
 | **双语 · 主题 · 可换导航** | 中英文（默认英文）、跟随系统/浅色/深色主题、导航可在侧边栏或顶栏之间切换 |
@@ -59,6 +60,16 @@ npm run dev
 打开 <http://localhost:3000>。首次启动会写入两个演示项目（`WB_BOOTSTRAP_DEMO_DATA=true`）。
 
 **不需要任何云凭据。** `localtest.me` 把 `*.localtest.me` 泛解析到 `127.0.0.1`，所以 `customer-success.localtest.me` 在浏览器里直接能开，零 DNS 配置。
+
+鉴权默认关闭 —— 打开页面不需要登录，本机上这样最省事。想看组织、角色、SSO 的真实效果，就打开它并播一个演示租户（播种脚本只走公开 API，真实租户也是这么建起来的）：
+
+```bash
+cd backend
+WB_AUTH_ENABLED=true uv run uvicorn app.main:app --port 8000   # 终端 1
+
+uv run python tools/access_demo.py                             # 终端 2
+# → owner@acme.test / workbench-demo-1，然后打开 /access
+```
 
 生成的项目落在 `data/projects/<slug>/`。删掉 `data/` 就是整平台重置。
 
@@ -295,22 +306,51 @@ WB_LLM_BASE_URL=http://127.0.0.1:8811/v1 WB_LLM_API_KEY=test uv run uvicorn app.
 
 ## 访问控制
 
-默认关闭（本地工作台不该为了打开一个页面先要凭据）。打开后一个中间件同时守住 REST 和挂载的 MCP：
+默认关闭（本地工作台不该为了打开一个页面先要凭据）。打开后，每个请求 —— REST 和挂载的 MCP —— 都按同一份权限目录判权：
 
 ```bash
 WB_AUTH_ENABLED=true
-WB_AUTH_TOKENS="tok_admin:alice:admin,tok_read:bob:viewer"
+WB_AUTH_ALLOW_SIGNUP=true          # 新组织的第一个注册者成为 owner
 ```
 
-| 角色 | 权限 |
+**组织就是租户边界。** 用户通过一条只带一个角色的成员关系属于某个组织；会话同一时刻只钉在一个组织上，右上角菜单负责切换。这条线不穿透 —— 把路径里的 id 改成别的组织，A 组织的管理员拿到的是 `404`，连 B 是否存在都不确认。
+
+**角色就是权限目录里的一组名字**（共 35 项：`project:deploy`、`sso:manage`、`member:invite` ……）。每个组织自带五个 —— `owner` `admin` `developer` `operator` `viewer` —— 也可以在界面上用勾选表自己加。没有继承需要推演：有效权限就是你组织角色与项目级授权的并集。
+
+| 层 | 决定什么 |
 | --- | --- |
-| `viewer` | 只读自己名下的资源 |
-| `editor` | 可创建、可修改，不能删除 |
-| `admin` | 全部，且能看到所有项目 |
+| 中间件 | 用方法 + 路径查路由表得出权限，`/mcp` 因此自动继承 REST 的策略而不会各自漂移；未登记的写操作一律拒绝 |
+| 处理器 | 再用 URL 里的组织校验主体，然后校验权限。拒绝在 403 发出**之前**就落审计 |
 
-项目带 `owner_id`，非 admin 只看得到自己的。浏览器把令牌存在 `localStorage`，以 Bearer 头发送；任何 `401` 只会弹一次解锁框，而不是让每个页面各自烂掉。
+会话是不透明 Bearer 令牌（`wbs_…`，落库只存 SHA-256，12 小时滑动续期），口令用标准库 scrypt。下面这些都在 `/access` 一页里 —— 成员、角色、SSO、审计、设置五个标签，缺哪个权限就少哪个标签：
 
-![令牌解锁](docs/screenshots/26-token-gate.png)
+![成员与邀请](docs/screenshots/37-access-zh-members.png)
+
+角色就地编辑，内置角色也能改（`owner` 除外，它必须保持全量，否则组织会把自己锁死）：
+
+![角色编辑](docs/screenshots/38-access-zh-roles.png)
+
+### 单点登录
+
+五种连接，全部可插拔、全部以数据形式配置 —— 加一种是在库里加一行，不是发版：
+
+| 类型 | 流程 | 关键点 |
+| --- | --- | --- |
+| **OIDC** | discovery → 用 JWKS 校验 `id_token` | PKCE S256，校验 `iss`/`aud`/`nonce`，拒绝 `alg=none` |
+| **OAuth2** | 授权 → 取令牌 → userinfo | 声明名可配，映射到姓名 / 邮箱 / 分组 |
+| **CAS** | `serviceValidate`（或 `p3/`）XML | state 藏在 `service` URL 里；代理票据会被拒绝 |
+| **企微** | 扫码登录或企微内 OAuth | 两种场景对应两个不同域名，自动选择 |
+| **钉钉** | `oauth2/userAccessToken` → `contact/users/me` | 主体取 `unionId`，换应用不换人 |
+
+每条连接都有界面里复制得到的回调地址、一次真发请求的「测试连接」（只存过但没验过是 `unchecked`，绝不谎报 `ready`）、IdP 分组到角色的映射，以及首次登录即建号：
+
+![SSO 连接](docs/screenshots/39-access-zh-sso.png)
+
+工作台还自带一个 OIDC 形状的模拟 IdP（`/api/v1/auth/mock/authorize`），走的是**真实**的 state → code → token → profile 链路 —— 整条流程可以离线、可以在 CI 里跑：
+
+![登录页](docs/screenshots/34-login.png)
+
+完整手册 —— 权限目录、路由表、每种连接的字段说明、纯 SSO 部署的引导流程：[docs/access.md](docs/access.md)。
 
 ---
 
@@ -344,7 +384,9 @@ WB_AUTH_TOKENS="tok_admin:alice:admin,tok_read:bob:viewer"
 | 换 Agent 框架（agentscope、langgraph） | 继承 `Harness` 并 `register_harness` | 否 |
 | 换模型供应商 | 设 `WB_LLM_BASE_URL` / `WB_LLM_MODEL` | 否 |
 | 放开 SQL 控制台 | `WB_SQL_MODE=write` | 否 |
-| 加角色或令牌 | `WB_AUTH_TOKENS` | 否 |
+| 加角色 | `/access` 里的角色编辑器，是库里一行，不是一次发版 | 否 |
+| 加一种 SSO | 继承 `IdP` 加一个 `SCHEMA` 字典，界面表单自己长出来 | 否 |
+| 加一项权限 | `core/permissions.py` 加一行，API、角色编辑器、路由表、Agent 提示词全都跟着走 | 否 |
 | 内嵌真正的 VS Code | 设 `WB_IDE_URL_TEMPLATE` | 否 |
 | 新增一门语言 | `lib/i18n.tsx` 加一个对象 | 否 |
 | 加新资源类型（如 Redis） | 新增 provider 能力 + 模板声明 | 是 |
@@ -383,8 +425,12 @@ WB_LLM_API_KEY=                  # 配了它，Agent 就用真实模型规划
 WB_LLM_MODEL=
 
 WB_SQL_MODE=readonly             # readonly | write
-WB_AUTH_ENABLED=false            # true -> 必须带 Bearer 令牌
-WB_AUTH_TOKENS=                  # "令牌:名字:admin,令牌2:bob:viewer"
+WB_AUTH_ENABLED=false            # true -> 需要登录，REST 与 /mcp 同时生效
+WB_AUTH_ALLOW_SIGNUP=true        # false -> 只能靠邀请与 SSO 进人
+WB_AUTH_SESSION_HOURS=12         # 会话滑动有效期
+WB_AUTH_DEFAULT_ORG=default      # 新账号落在哪个组织
+WB_PUBLIC_API_BASE=              # 浏览器访问 API 的地址（SSO 回调要用）
+WB_FRONTEND_URL=http://localhost:3000
 ```
 
 `WB_DEPLOY_MODE=process` 会真的在分配端口上起子进程；`simulate`（默认）只产出贴近真实的构建日志，不启动任何东西。预览跟随 `WB_DEPLOY_MODE`，除非 `WB_PREVIEW_MODE` 另有指定 —— 而且它总会回退到静态宿主，不会把一个死端口丢进 iframe。
@@ -398,20 +444,24 @@ WB_AUTH_TOKENS=                  # "令牌:名字:admin,令牌2:bob:viewer"
 ```
 backend/
   app/
-    api/           projects · workspace · platform · registry · system
-    core/          config · db · security · migrate · errors · ids
+    api/           auth · orgs · projects · workspace · platform · registry · system
+    core/          config · db · security · permissions · passwords · context
+                   migrate · errors · ids
     services/      conventions · scaffold · templates · deployments · gitops
-                   system_tools · agent_runtime · llm · sql_guard
+                   identity · audit · system_tools · agent_runtime · llm · sql_guard
     providers/     base（SPI + 注册表）+ local/{storage,database,domain,deploy,static_host}
+                   auth/{base,cas,oauth2(OIDC),wecom,dingtalk}
     mcp/server.py  fastmcp 服务端，与 REST 同端口
-    models.py      9 张表
-  tools/mock_llm.py  离线验证 LLM 链路的假端点
+    models.py      21 张表
+  tools/           mock_llm.py · auth_smoke.py · access_demo.py
 frontend/
-  app/             11 个路由，/projects/[id] 下八个标签页
-  components/      Shell · Rail · Topbar · NavLinks · Preferences · TokenGate
-                   CreateProjectDialog · LogViewer · CodeEditor · Icon（全 SVG）
-  lib/             api · auth · types · format · i18n · prefs · nav
+  app/             13 个路由，/projects/[id] 下八个标签页
+  components/      Shell · Rail · Topbar · NavLinks · Preferences · SessionMenu
+                   AuthGate · CreateProjectDialog · LogViewer · CodeEditor
+                   access/{Members,Roles,Sso,Audit,Settings}Panel · Icon（全 SVG）
+  lib/             api · session · auth · access · types · format · i18n · prefs · nav
 docs/architecture.md   设计取舍、数据模型、扩展点
+docs/access.md         RBAC、组织、SSO 的运维手册
 docs/conventions/      三类项目规范 + 「约定大于配置」的来龙去脉
 scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 ```
@@ -420,7 +470,7 @@ scripts/shoot.mjs      端到端走查脚本，上面的截图由它生成
 
 ## 已知限制
 
-预览宿主跑在**控制面进程内**，所以重启后端会带走所有预览 —— 状态接口能发现端口已死并诚实报成 `stopped`，但不会自动拉起 · 内置编辑器没有多文件搜索替换 · 没有项目级 RBAC（角色是全局的）· SQL 护栏是首关键字白名单而非真正的解析器 · 部署串行化只在单进程内有效，多副本仍可能竞争 · MCP 鉴权依赖客户端主动带 header · Agent 写文件没有影子副本，`write_project_file` 前没有 dry-run。
+预览宿主跑在**控制面进程内**，所以重启后端会带走所有预览 —— 状态接口能发现端口已死并诚实报成 `stopped`，但不会自动拉起 · 内置编辑器没有多文件搜索替换 · 授权做到了组织级与项目级，再往下的单资源 ACL 没有 · IdP 分组映射依赖对方真的把 groups 声明发过来，且没有 SCIM，离职的人要到我们这里停用或等会话过期才失效 · SQL 护栏是首关键字白名单而非真正的解析器 · 部署串行化只在单进程内有效，多副本仍可能竞争 · MCP 鉴权依赖客户端主动带 Bearer 头 · Agent 写文件没有影子副本，`write_project_file` 前没有 dry-run。
 
 每一条的推荐解法见[架构文档 §14](docs/architecture.md#14-已知限制与下一步)。
 

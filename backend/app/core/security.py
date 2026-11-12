@@ -1,61 +1,173 @@
-"""Token auth + role gates.
+"""Identity resolution and authorisation.
 
-Design constraints:
+The flow, per request:
 
-* **Off by default.** A local workbench behind ``127.0.0.1`` should not make you mint
-  credentials before you can click "create app". ``WB_AUTH_ENABLED=false`` means every
-  request is an anonymous admin.
-* **Tokens in env, not in the database.** Stateless, restart-safe, and it keeps the
-  "no migration required" property of the rest of the platform.
-* **Roles are coarse on purpose.** ``viewer`` (read), ``editor`` (no destructive
-  verbs), ``admin`` (everything). Anything finer belongs to a real IdP, not here.
+1. ``WB_AUTH_ENABLED=false`` → an anonymous admin. A control plane on
+   ``127.0.0.1`` should not require credentials before you can click "create app".
+2. Otherwise a bearer token is either a **session** (``wbs_…``, hashed at rest in
+   the ``sessions`` table) or a **bootstrap token** from ``WB_AUTH_TOKENS``.
 
-Token file format: ``WB_AUTH_TOKENS="tok1:alice:admin,tok2:bob:viewer"``. A bare
-``WB_AUTH_TOKENS="secret"`` becomes an admin token named ``operator``.
+A session resolves into a :class:`Principal` carrying the *effective* permission
+set for one organization: the membership role, plus any project-scoped
+``RoleBinding`` grants. Authority is therefore recomputed on every request —
+removing a role takes effect immediately instead of at the next login.
+
+Design constraints, kept from the previous version on purpose:
+
+* **Tokens in env still work.** Upgrading should not lock the operator out of
+  their own workbench; ``WB_AUTH_TOKENS`` maps onto the builtin roles.
+* **One rule set for REST and MCP.** Resolution happens in middleware, so the
+  FastMCP app mounted at ``/mcp`` is covered by the same policy.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from fastapi import Request
+from sqlmodel import Session, select
 
+from app.core import passwords
 from app.core.config import settings
+from app.core.db import session_scope
 from app.core.errors import ForbiddenError, UnauthorizedError
+from app.core import permissions as perms
+from app.models import (
+    IdentityProvider,
+    Membership,
+    MemberStatus,
+    Organization,
+    OrgStatus,
+    Role,
+    RoleBinding,
+    Session as SessionModel,
+    User,
+    UserStatus,
+)
 
-ROLE_RANK = {"viewer": 1, "editor": 2, "admin": 3}
+# Legacy role names kept so old configs keep working.
+LEGACY_ROLE_MAP = {"viewer": "viewer", "editor": "developer", "admin": "admin"}
 
 # paths that must stay reachable before the client has a token
 PUBLIC_PATHS = {"/", "/docs", "/redoc", "/openapi.json"}
-PUBLIC_PREFIXES = ("/api/v1/system/health", "/api/v1/system/settings", "/static", "/favicon")
+PUBLIC_PREFIXES = (
+    "/api/v1/system/health",
+    "/api/v1/system/settings",
+    "/api/v1/auth/",
+    "/static",
+    "/favicon",
+)
+
+# header used by API clients / the SPA to pin the active organization
+ORG_HEADER = "x-org-id"
+
+
+@dataclass(frozen=True, slots=True)
+class OrgRef:
+    id: str
+    slug: str
+    name: str
+    role_key: str
 
 
 @dataclass(frozen=True, slots=True)
 class Principal:
+    """Everything needed to answer "may this caller do X to Y"."""
+
     name: str
     role: str = "admin"
     anonymous: bool = False
+    user_id: str = ""
+    email: str = ""
+    org_id: str = ""
+    org_slug: str = ""
+    permissions: frozenset[str] = frozenset()
+    # project_id -> extra permissions granted by a RoleBinding
+    grants: dict[str, frozenset[str]] = field(default_factory=dict)
+    orgs: tuple[OrgRef, ...] = ()
+    is_platform_admin: bool = False
+    auth_method: str = "none"  # none | session | bootstrap
+    session_id: str = ""
 
+    # -- coarse checks kept for older call sites -------------------------
     @property
     def is_admin(self) -> bool:
-        return self.role == "admin"
+        return self.is_platform_admin or "org:delete" in self.permissions
 
     def may_write(self) -> bool:
-        return ROLE_RANK.get(self.role, 0) >= ROLE_RANK["editor"]
+        return self.has("project:update")
 
     def may_destroy(self) -> bool:
-        return self.is_admin
+        return self.has("project:delete")
+
+    # -- real checks ------------------------------------------------------
+    def has(self, permission: str, project_id: str | None = None) -> bool:
+        if not permission:
+            return True
+        if self.anonymous or self.is_platform_admin:
+            return True
+        if "*" in self.permissions or permission in self.permissions:
+            return True
+        if project_id:
+            extra = self.grants.get(project_id)
+            if extra and permission in extra:
+                return True
+        return False
+
+    def has_any(self, *candidates: str) -> bool:
+        return any(self.has(item) for item in candidates)
+
+    def require(self, permission: str, project_id: str | None = None, detail: str = "") -> None:
+        if not self.has(permission, project_id):
+            raise ForbiddenError(detail or f"缺少权限 {permission}")
 
     def to_dict(self) -> dict[str, object]:
-        return {"name": self.name, "role": self.role, "anonymous": self.anonymous}
+        return {
+            "name": self.name,
+            "role": self.role,
+            "anonymous": self.anonymous,
+            "user_id": self.user_id,
+            "email": self.email,
+            "org_id": self.org_id,
+            "org_slug": self.org_slug,
+            "is_platform_admin": self.is_platform_admin,
+            "auth_method": self.auth_method,
+            "permissions": sorted(self.permissions),
+            "projects_with_grants": sorted(self.grants),
+            "organizations": [
+                {"id": o.id, "slug": o.slug, "name": o.name, "role_key": o.role_key}
+                for o in self.orgs
+            ],
+        }
 
 
-ANONYMOUS_ADMIN = Principal(name="anonymous", role="admin", anonymous=True)
+ANONYMOUS_ADMIN = Principal(
+    name="anonymous",
+    role="owner",
+    anonymous=True,
+    permissions=perms.expand(["*"]),
+    is_platform_admin=True,
+    auth_method="none",
+)
 
 
-def parse_tokens(raw: str | None = None) -> dict[str, Principal]:
+# --------------------------------------------------------------------------
+# bootstrap tokens (WB_AUTH_TOKENS)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapToken:
+    token: str
+    name: str
+    role_key: str
+
+
+def parse_tokens(raw: str | None = None) -> dict[str, BootstrapToken]:
+    """``tok1:alice:admin,tok2:bob:viewer`` — bare ``secret`` means operator/admin."""
     source = (settings.auth_tokens if raw is None else raw) or ""
-    tokens: dict[str, Principal] = {}
+    tokens: dict[str, BootstrapToken] = {}
     for entry in source.split(","):
         entry = entry.strip()
         if not entry:
@@ -65,13 +177,19 @@ def parse_tokens(raw: str | None = None) -> dict[str, Principal]:
         if not token:
             continue
         name = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "operator"
-        role = parts[2].strip().lower() if len(parts) > 2 and parts[2].strip() else "admin"
-        if role not in ROLE_RANK:
-            role = "admin"
-        tokens[token] = Principal(name=name, role=role)
+        legacy = parts[2].strip().lower() if len(parts) > 2 and parts[2].strip() else "admin"
+        tokens[token] = BootstrapToken(token=token, name=name,
+                                       role_key=LEGACY_ROLE_MAP.get(legacy, "admin"))
     if not tokens and settings.auth_bootstrap_token:
-        tokens[settings.auth_bootstrap_token] = Principal(name="operator", role="admin")
+        tokens[settings.auth_bootstrap_token] = BootstrapToken(
+            token=settings.auth_bootstrap_token, name="operator", role_key="admin"
+        )
     return tokens
+
+
+# --------------------------------------------------------------------------
+# resolution
+# --------------------------------------------------------------------------
 
 
 def extract_token(request: Request) -> str:
@@ -85,21 +203,172 @@ def extract_token(request: Request) -> str:
     return (request.query_params.get("token") or "").strip()
 
 
+def _active_orgs(session: Session, user_id: str) -> list[tuple[Organization, Membership]]:
+    rows = session.exec(
+        select(Membership).where(
+            Membership.user_id == user_id, Membership.status == MemberStatus.ACTIVE
+        )
+    ).all()
+    pairs: list[tuple[Organization, Membership]] = []
+    for membership in rows:
+        org = session.get(Organization, membership.org_id)
+        if org and org.status == OrgStatus.ACTIVE:
+            pairs.append((org, membership))
+    pairs.sort(key=lambda pair: (pair[1].role_key != "owner", pair[0].name))
+    return pairs
+
+
+def effective_permissions(
+    session: Session, org_id: str, role_key: str
+) -> frozenset[str]:
+    role = session.exec(
+        select(Role).where(Role.org_id == org_id, Role.key == role_key)
+    ).first()
+    if role is not None:
+        return perms.expand(role.permissions)
+    return perms.role_permissions(role_key)
+
+
+def _project_grants(session: Session, user_id: str) -> dict[str, frozenset[str]]:
+    rows = session.exec(select(RoleBinding).where(RoleBinding.user_id == user_id)).all()
+    grants: dict[str, frozenset[str]] = {}
+    for row in rows:
+        if not row.scope_id:
+            continue
+        granted = perms.expand(row.permissions)
+        if row.role_key:
+            granted = granted | perms.role_permissions(row.role_key)
+        grants[row.scope_id] = grants.get(row.scope_id, frozenset()) | granted
+    return grants
+
+
+def principal_from_session(session: Session, row: SessionModel, request: Request | None = None):
+    user = session.get(User, row.user_id)
+    if user is None or user.status != UserStatus.ACTIVE:
+        raise UnauthorizedError("账户不可用")
+
+    pairs = _active_orgs(session, user.id)
+    if not pairs:
+        # authenticated but belongs nowhere: still a valid identity, no authority
+        return Principal(
+            name=user.name or user.email,
+            role="none",
+            user_id=user.id,
+            email=user.email,
+            permissions=frozenset(),
+            auth_method="session",
+            session_id=row.id,
+        )
+
+    wanted = ""
+    if request is not None:
+        wanted = (request.headers.get(ORG_HEADER) or "").strip()
+    chosen: tuple[Organization, Membership] | None = None
+    if wanted:
+        chosen = next(
+            (pair for pair in pairs if wanted in (pair[0].id, pair[0].slug)), None
+        )
+    if chosen is None and row.org_id:
+        chosen = next((pair for pair in pairs if pair[0].id == row.org_id), None)
+    if chosen is None:
+        chosen = pairs[0]
+
+    org, membership = chosen
+    permissions = effective_permissions(session, org.id, membership.role_key)
+    if user.is_platform_admin:
+        permissions = perms.expand(["*"])
+
+    return Principal(
+        name=user.name or user.email or user.id,
+        role=membership.role_key,
+        user_id=user.id,
+        email=user.email,
+        org_id=org.id,
+        org_slug=org.slug,
+        permissions=permissions,
+        grants=_project_grants(session, user.id),
+        orgs=tuple(
+            OrgRef(id=o.id, slug=o.slug, name=o.name, role_key=m.role_key) for o, m in pairs
+        ),
+        is_platform_admin=user.is_platform_admin,
+        auth_method="session",
+        session_id=row.id,
+    )
+
+
+def _bootstrap_principal(token: BootstrapToken, session: Session) -> Principal:
+    """Env tokens act as a member of the default org, with the mapped role."""
+    org = session.exec(select(Organization).order_by(Organization.created_at)).first()  # type: ignore[attr-defined]
+    org_id = org.id if org else ""
+    org_slug = org.slug if org else ""
+    return Principal(
+        name=token.name,
+        role=token.role_key,
+        org_id=org_id,
+        org_slug=org_slug,
+        permissions=perms.role_permissions(token.role_key),
+        orgs=(OrgRef(id=org.id, slug=org.slug, name=org.name, role_key=token.role_key),)
+        if org
+        else (),
+        auth_method="bootstrap",
+    )
+
+
 def resolve(request: Request) -> Principal:
-    """Identity for this request. Anonymous admin when auth is disabled."""
+    """Identity for this request. Raises 401 when auth is on and nothing matches."""
     if not settings.auth_enabled:
         return ANONYMOUS_ADMIN
+
     token = extract_token(request)
-    principal = parse_tokens().get(token) if token else None
-    if principal is None:
-        raise UnauthorizedError("缺少或无效的访问令牌", details={"scheme": "Bearer"})
-    return principal
+    if not token:
+        raise UnauthorizedError("缺少访问令牌", details={"scheme": "Bearer"})
+
+    with session_scope() as session:
+        bootstrap = parse_tokens().get(token)
+        if bootstrap is not None:
+            return _bootstrap_principal(bootstrap, session)
+
+        row = session.exec(
+            select(SessionModel).where(SessionModel.token_hash == passwords.token_hash(token))
+        ).first()
+        if row is None:
+            raise UnauthorizedError("令牌无效", details={"scheme": "Bearer"})
+        now = datetime.now(timezone.utc)
+        expires = row.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if row.revoked_at is not None or expires <= now:
+            raise UnauthorizedError("会话已过期，请重新登录", details={"reason": "expired"})
+
+        # cheap sliding activity marker; write at most once a minute
+        if now.timestamp() - row.last_seen_at.replace(tzinfo=timezone.utc).timestamp() > 60:
+            row.last_seen_at = now
+            session.add(row)
+
+        return principal_from_session(session, row, request)
 
 
 def get_principal(request: Request) -> Principal:
-    """FastAPI dependency — relies on the middleware having resolved the identity."""
+    """FastAPI dependency — the middleware has already resolved the identity."""
     principal = getattr(request.state, "principal", None)
     return principal if isinstance(principal, Principal) else ANONYMOUS_ADMIN
+
+
+def require(permission: str):
+    """Dependency factory for endpoints with a project id in the path."""
+
+    def _dependency(request: Request) -> Principal:
+        principal = get_principal(request)
+        project_id = request.path_params.get("project_id")
+        principal.require(permission, project_id)
+        return principal
+
+    return _dependency
+
+
+# --------------------------------------------------------------------------
+# helpers used by the routers
+# --------------------------------------------------------------------------
 
 
 def is_public(path: str) -> bool:
@@ -108,21 +377,29 @@ def is_public(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES)
 
 
-def check_method(principal: Principal, method: str) -> None:
-    """Coarse RBAC: viewer reads, editor mutates, admin destroys."""
-    verb = method.upper()
-    if verb in {"GET", "HEAD", "OPTIONS"}:
-        return
-    if verb == "DELETE":
-        if not principal.may_destroy():
-            raise ForbiddenError(f"角色 {principal.role} 不能执行删除操作")
-        return
-    if not principal.may_write():
-        raise ForbiddenError(f"角色 {principal.role} 为只读，不能修改资源")
+def can_access(principal: Principal, owner_id: str | None, org_id: str | None = None) -> bool:
+    """Project visibility.
 
-
-def can_access(principal: Principal, owner_id: str | None) -> bool:
-    """Owners see their own projects; admins see everything."""
-    if principal.is_admin or not owner_id:
+    Organization membership is the boundary: everyone inside sees the projects
+    their role can read, nobody outside sees anything (unless platform admin).
+    Rows created before organizations existed fall back to owner identity.
+    """
+    if principal.anonymous or principal.is_platform_admin:
         return True
-    return owner_id == principal.name
+    if org_id:
+        return principal.org_id == org_id
+    if not owner_id:
+        return bool(principal.org_id)
+    return owner_id in {principal.name, principal.user_id, principal.email}
+
+
+def sso_enabled() -> bool:
+    """At least one enabled provider that is not the local password store."""
+    with session_scope() as session:
+        row = session.exec(
+            select(IdentityProvider).where(
+                IdentityProvider.enabled == True,  # noqa: E712
+                IdentityProvider.kind != "local",
+            )
+        ).first()
+        return row is not None

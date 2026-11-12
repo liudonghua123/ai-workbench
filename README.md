@@ -37,7 +37,8 @@ exposed over MCP so an agent can keep working on it afterwards. **There is no
 | **MCP / Skills / Agents** | All three are first-class, visually managed entities stored as data |
 | **A real agent, or a fake one** | Pluggable harness: point `WB_LLM_BASE_URL` at any OpenAI-compatible endpoint and the agent plans over tool calls; without a key it falls back to a deterministic rule planner |
 | **Guarded database console** | Read-only by default: statement allow-list plus a deny-list for `ATTACH`, `load_extension`, `writable_schema` |
-| **Optional token auth** | `viewer` / `editor` / `admin` roles enforced in one middleware, covering REST *and* `/mcp`; off by default for local use |
+| **Organizations + real RBAC** | Five built-in roles over a 35-key permission catalog, custom roles, project-scoped grants, invitations, suspension, audit trail — one route table guards REST *and* `/mcp` |
+| **SSO: CAS / OAuth2 / OIDC / WeCom / DingTalk** | Each provider is data, configured in the UI, verified by a real probe; JIT provisioning and IdP-group → role mapping on first login |
 | **Conventions over configuration** | Three type specs (fullstack / frontend / backend) drive scaffolding, a conformance report, the preview command and the agent prompt from one place |
 | **Swappable cloud** | Storage / database / DNS / deploy sit behind one Provider SPI — swapping a cloud is one env var |
 | **Bilingual, themeable, relocatable UI** | English/Chinese (defaults to English), system/light/dark theme, and the nav can live in a sidebar or the top bar |
@@ -69,6 +70,19 @@ Open <http://localhost:3000>. Two demo projects are seeded on first boot
 No cloud credentials are needed. `localtest.me` resolves `*.localtest.me` to
 `127.0.0.1`, so `customer-success.localtest.me` works in your browser with zero
 DNS setup.
+
+Auth is off by default — the console just opens, which is what you want on a
+laptop. To see organizations, roles and SSO for real, turn it on and seed a demo
+tenant (the seeder only uses the public API, so a real tenant could be built the
+same way):
+
+```bash
+cd backend
+WB_AUTH_ENABLED=true uv run uvicorn app.main:app --port 8000   # terminal 1
+
+uv run python tools/access_demo.py                             # terminal 2
+# → owner@acme.test / workbench-demo-1, then open /access
+```
 
 **Generated projects land in `data/projects/<slug>/`.** Delete `data/` to reset
 the whole platform.
@@ -337,24 +351,71 @@ Settings → **Test connection** does one round-trip and shows the model's reply
 ## Access control
 
 Off by default (a local workbench shouldn't ask for credentials to open a page).
-Turn it on and one middleware guards both REST and the mounted MCP app:
+Turn it on and every request — REST *and* the mounted MCP app — is authorized
+against the same permission catalog:
 
 ```bash
 WB_AUTH_ENABLED=true
-WB_AUTH_TOKENS="tok_admin:alice:admin,tok_read:bob:viewer"
+WB_AUTH_ALLOW_SIGNUP=true          # first user of a new org becomes its owner
 ```
 
-| Role | Can do |
+**Organizations are the tenancy boundary.** A user belongs to an org through a
+membership that carries exactly one role; the session is pinned to one org at a
+time and the top-right menu switches between them. Nothing crosses that line —
+an admin of org A editing a path segment to reach org B gets a `404`, so the
+existence of B isn't even confirmed.
+
+**A role is a named set of permissions from a 35-key catalog** (`project:deploy`,
+`sso:manage`, `member:invite`, …). Five ship with every org — `owner` `admin`
+`developer` `operator` `viewer` — and you can add your own in the UI with a
+checkbox grid. There is no inheritance to reason about; the effective permission
+set is just the union of your org role and any project-scoped grants.
+
+| Layer | What it decides |
 | --- | --- |
-| `viewer` | Read everything they own |
-| `editor` | Create/modify, cannot delete |
-| `admin` | Everything, sees every project |
+| Middleware | Maps the method + path to a permission through a route table, so `/mcp` inherits the REST policy instead of drifting from it. Unmatched writes fail closed |
+| Handler | Re-checks the org in the URL against the principal, then the permission. Denials are audited *before* the 403 leaves |
 
-Projects carry an `owner_id`; non-admins only see their own. The browser keeps the
-token in `localStorage`, attaches it as a bearer header, and any `401` raises one
-unlock dialog instead of N broken pages.
+Sessions are opaque bearer tokens (`wbs_…`, SHA-256 at rest, 12 h sliding),
+passwords are scrypt via the stdlib. Everything below is one page —
+`/access` — with members, roles, SSO, audit and settings tabs, each hidden when
+you lack the permission for it:
 
-![Token gate](docs/screenshots/26-token-gate.png)
+![Members and invitations](docs/screenshots/26-access-members.png)
+
+Roles are edited inline, built-ins included (except `owner`, which must stay
+total so an org can never lock itself out):
+
+![Role editor](docs/screenshots/27-access-role-editor.png)
+
+### Single sign-on
+
+Five provider families, all pluggable and all configured as data, so adding one
+is a row in the database rather than a release:
+
+| Kind | Flow | Notes |
+| --- | --- | --- |
+| **OIDC** | discovery → `id_token` verified against JWKS | PKCE S256, `iss`/`aud`/`nonce` checked, `alg=none` rejected |
+| **OAuth2** | authorize → token → userinfo | maps configurable claims onto name/email/groups |
+| **CAS** | `serviceValidate` (or `p3/`) XML | state rides inside the `service` URL; proxy tickets rejected |
+| **WeCom** | QR login or in-client OAuth | two different hosts for the two cases — picked automatically |
+| **DingTalk** | `oauth2/userAccessToken` → `contact/users/me` | subject is the `unionId`, so moving apps keeps identity |
+
+Every connection has a callback URL you copy from the UI, a **Test connection**
+button that performs a real round-trip (saved-but-unverified is `unchecked`,
+never `ready`), an IdP-group → role map, and JIT provisioning so an SSO user
+exists the moment they first log in:
+
+![SSO connections](docs/screenshots/29-access-sso.png)
+
+The workbench also serves an OIDC-shaped mock IdP at
+`/api/v1/auth/mock/authorize`, which walks the *real* state → code → token →
+profile path — so the whole flow is testable offline and in CI:
+
+![Login](docs/screenshots/34-login.png)
+
+Full manual — catalog, route table, per-provider field reference, bootstrap
+runbook for an SSO-only install: [docs/access.md](docs/access.md).
 
 ---
 
@@ -389,7 +450,9 @@ Full rationale and per-type details: [docs/conventions/](docs/conventions/README
 | Swap the agent framework (agentscope, langgraph) | Subclass `Harness`, call `register_harness` | none |
 | Different model provider | Set `WB_LLM_BASE_URL` / `WB_LLM_MODEL` | none |
 | Loosen the SQL console | `WB_SQL_MODE=write` | none |
-| Add a role or a token | `WB_AUTH_TOKENS` | none |
+| Add a role | The role editor in `/access` — it's a row, not a release | none |
+| Add an SSO provider kind | One `IdP` subclass + a `SCHEMA` dict — the UI form renders itself | none |
+| Add a permission | One line in `core/permissions.py` — API, role editor, route table and agent prompt all follow | none |
 | Embed real VS Code | Set `WB_IDE_URL_TEMPLATE` | none |
 | New locale | One object in `lib/i18n.tsx` | none |
 | New resource kind (e.g. Redis) | New provider capability + template declaration | yes |
@@ -429,8 +492,12 @@ WB_LLM_API_KEY=                  # set -> agents plan with a real model
 WB_LLM_MODEL=
 
 WB_SQL_MODE=readonly             # readonly | write
-WB_AUTH_ENABLED=false            # true -> bearer token required
-WB_AUTH_TOKENS=                  # "token:name:admin,token2:bob:viewer"
+WB_AUTH_ENABLED=false            # true -> sign in required, REST + /mcp
+WB_AUTH_ALLOW_SIGNUP=true        # false -> only invitations and SSO
+WB_AUTH_SESSION_HOURS=12         # sliding session lifetime
+WB_AUTH_DEFAULT_ORG=default      # org a brand-new account lands in
+WB_PUBLIC_API_BASE=              # how the browser reaches the API (SSO callbacks)
+WB_FRONTEND_URL=http://localhost:3000
 ```
 
 `WB_DEPLOY_MODE=process` actually spawns the project's run command on its
@@ -449,20 +516,24 @@ columns, idempotent indexes. No migration step to remember, no `ALTER` surprises
 ```
 backend/
   app/
-    api/           projects · workspace · platform · registry · system
-    core/          config · db · security · migrate · errors · ids
+    api/           auth · orgs · projects · workspace · platform · registry · system
+    core/          config · db · security · permissions · passwords · context
+                   migrate · errors · ids
     services/      conventions · scaffold · templates · deployments · gitops
-                   system_tools · agent_runtime · llm · sql_guard
+                   identity · audit · system_tools · agent_runtime · llm · sql_guard
     providers/     base (SPI + registry) + local/{storage,database,domain,deploy,static_host}
+                   auth/{base,cas,oauth2(OIDC),wecom,dingtalk}
     mcp/server.py  fastmcp server, mounted on the same port
-    models.py      9 tables
-  tools/mock_llm.py  fake OpenAI endpoint for offline harness tests
+    models.py      21 tables
+  tools/           mock_llm.py · auth_smoke.py · access_demo.py
 frontend/
-  app/             11 routes, eight tabs under /projects/[id]
-  components/      Shell · Rail · Topbar · NavLinks · Preferences · TokenGate
-                   CreateProjectDialog · LogViewer · CodeEditor · Icon (all SVG)
-  lib/             api · auth · types · format · i18n · prefs · nav
+  app/             13 routes, eight tabs under /projects/[id]
+  components/      Shell · Rail · Topbar · NavLinks · Preferences · SessionMenu
+                   AuthGate · CreateProjectDialog · LogViewer · CodeEditor
+                   access/{Members,Roles,Sso,Audit,Settings}Panel · Icon (all SVG)
+  lib/             api · session · auth · access · types · format · i18n · prefs · nav
 docs/architecture.md   design rationale, data model, extension points
+docs/access.md         RBAC, organizations, SSO — the operator's manual
 docs/conventions/      the three type specs + "convention over configuration"
 scripts/shoot.mjs      smoke walk-through that produces the screenshots above
 ```
@@ -474,10 +545,13 @@ scripts/shoot.mjs      smoke walk-through that produces the screenshots above
 The preview host runs **in the control-plane process**, so restarting the backend
 drops live previews — the state endpoint detects the dead port and reports
 `stopped` rather than lying, but it does not respawn them · the built-in editor has
-no multi-file search-and-replace · no per-project RBAC (roles are global) · the SQL
-guard is a first-keyword allow-list, not a real parser · deployments are serialised
-per process, so two API replicas could still race · MCP auth relies on the client
-sending headers · the agent's writes are unshadowed — no dry-run before
+no multi-file search-and-replace · role grants are per-org and per-project, but
+there is no per-*resource* ACL below that · SSO group → role mapping needs the IdP
+to actually send a groups claim, and there is no SCIM, so a leaver keeps access
+until you suspend them here or their session expires · the SQL guard is a
+first-keyword allow-list, not a real parser · deployments are serialised per
+process, so two API replicas could still race · MCP auth relies on the client
+sending the bearer header · the agent's writes are unshadowed — no dry-run before
 `write_project_file`. See
 [§14 of the architecture doc](docs/architecture.md#14-已知限制与下一步) for the
 recommended fix for each.
