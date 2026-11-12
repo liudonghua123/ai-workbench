@@ -5,8 +5,25 @@ import { Icon } from "@/components/Icon";
 import { CopyButton, Pill, Skeleton, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { clearToken, getToken, setToken } from "@/lib/auth";
-import { useI18n } from "@/lib/i18n";
-import type { GatewayStatus, HarnessReport, LlmStatus, LlmTest, Me, Settings } from "@/lib/types";
+import { useI18n, type MessageKey } from "@/lib/i18n";
+import type {
+  GatewayStatus,
+  HarnessReport,
+  LlmStatus,
+  LlmTest,
+  Me,
+  Settings,
+  TlsMode,
+  TlsStatus,
+} from "@/lib/types";
+
+const TLS_MODE_LABEL: Record<TlsMode, MessageKey> = {
+  manual: "sys.tlsMode.manual",
+  files: "sys.tlsMode.files",
+  acme: "sys.tlsMode.acme",
+  mixed: "sys.tlsMode.mixed",
+  off: "sys.tlsMode.off",
+};
 
 export default function SettingsPage() {
   const { t } = useI18n();
@@ -23,6 +40,8 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<LlmTest | null>(null);
   const [gateway, setGateway] = useState<GatewayStatus | null>(null);
+  const [tls, setTls] = useState<TlsStatus | null>(null);
+  const [issuing, setIssuing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -48,6 +67,11 @@ export default function SettingsPage() {
       } catch {
         setGateway(null);
       }
+      try {
+        setTls(await api.tls());
+      } catch {
+        setTls(null);
+      }
     } catch (err) {
       push(err instanceof Error ? err.message : "failed", "err");
     }
@@ -67,6 +91,23 @@ export default function SettingsPage() {
       setTest({ ok: false, configured: false, error: err instanceof Error ? err.message : "error" });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const issueCerts = async (hosts?: string[]) => {
+    setIssuing(true);
+    try {
+      const result = await api.issueCert(hosts);
+      if (result.errors.length) {
+        push(result.errors[0].message, "err");
+      } else {
+        push(t("sys.tlsIssueQueued"), "ok");
+      }
+      setTls(await api.tls());
+    } catch (err) {
+      push(err instanceof Error ? err.message : "failed", "err");
+    } finally {
+      setIssuing(false);
     }
   };
 
@@ -378,6 +419,211 @@ export default function SettingsPage() {
           </div>
         </section>
       </div>
+
+      <section className="card card-pad" data-shot="tls" style={{ marginTop: 16 }}>
+        <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+          <Icon name="shield" size={14} />
+          <span className="card-title">{t("sys.tls")}</span>
+          <div className="spacer" />
+          {tls ? (
+            <Pill tone={tls.enabled ? (tls.certificate.usable ? "ok" : "warn") : "idle"}>
+              {t(TLS_MODE_LABEL[tls.mode])}
+            </Pill>
+          ) : (
+            <Pill tone="idle">{t("sys.tlsMode.off")}</Pill>
+          )}
+        </div>
+        <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.65 }}>
+          {t("sys.tlsHint")}
+        </div>
+
+        {tls && !tls.enabled ? (
+          <div className="muted" style={{ fontSize: 12, marginTop: 12, lineHeight: 1.7 }}>
+            {t("sys.tlsOffHint")}
+            <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+              <span className="tag mono">WB_GATEWAY_TLS_CERT</span>
+              <span className="tag mono">WB_GATEWAY_TLS_KEY</span>
+              <span className="tag mono">WB_GATEWAY_ACME_ENABLED</span>
+            </div>
+          </div>
+        ) : null}
+
+        {tls && tls.enabled ? (
+          <>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap", margin: "12px 0" }}>
+              {tls.certificate.primary ? (
+                <span className="tag">{tls.certificate.primary.issuer || "—"}</span>
+              ) : null}
+              {tls.certificate.days_left !== null ? (
+                <span className="tag">
+                  {t("sys.tlsDays", { n: tls.certificate.days_left })}
+                </span>
+              ) : null}
+              <span className="tag mono">
+                {tls.scheme}://*{tls.suffix}
+                {tls.port === 443 ? "" : `:${tls.port}`}
+              </span>
+              <span className="tag">
+                {tls.acme.enabled ? `acme · ${tls.acme.email || "—"}` : "acme off"}
+              </span>
+            </div>
+
+            {tls.certificate.bootstrap ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--warn)",
+                  background: "var(--warn-soft)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  marginBottom: 12,
+                }}
+              >
+                {t("sys.tlsBootstrap")}
+              </div>
+            ) : null}
+
+            {tls.certificate.certs.length ? (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>{t("sys.tlsCert")}</th>
+                      <th>{t("sys.tlsSource")}</th>
+                      <th>{t("sys.tlsIssuer")}</th>
+                      <th>{t("sys.tlsExpiry")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tls.certificate.certs.map((cert) => (
+                      <tr key={cert.path}>
+                        <td className="mono" style={{ fontSize: 11 }}>
+                          {cert.hosts.join(", ") || cert.path}
+                        </td>
+                        <td>
+                          <span className="tag">{cert.source}</span>
+                        </td>
+                        <td className="muted" style={{ fontSize: 11 }}>
+                          {cert.key_ok ? cert.issuer || "—" : t("sys.tlsKeyMismatch")}
+                        </td>
+                        <td
+                          style={{
+                            fontSize: 11,
+                            color: cert.expired
+                              ? "var(--err)"
+                              : cert.days_left <= 14
+                                ? "var(--warn)"
+                                : "var(--ink-3)",
+                          }}
+                        >
+                          {cert.expired
+                            ? t("sys.tlsExpired")
+                            : t("sys.tlsDays", { n: cert.days_left })}
+                          <span className="muted" style={{ marginLeft: 6 }}>
+                            {cert.not_after.slice(0, 10)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            <div className="divider" style={{ margin: "14px 0 10px" }} />
+            <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 500 }}>
+                {tls.missing.length
+                  ? `${t("sys.tlsMissing")} · ${tls.missing.length}`
+                  : t("sys.tlsMissing")}
+              </span>
+              <div className="spacer" />
+              <button
+                className="btn btn-sm"
+                disabled={issuing || !tls.acme.enabled || !tls.missing.length}
+                onClick={() => issueCerts()}
+              >
+                <Icon name="plus" size={12} /> {t("sys.tlsIssueAll")}
+              </button>
+            </div>
+            {tls.missing.length ? (
+              <div className="table-wrap">
+                <table className="table">
+                  <tbody>
+                    {tls.missing.slice(0, 12).map((host) => (
+                      <tr key={host}>
+                        <td className="mono" style={{ fontSize: 11.5 }}>
+                          {host}
+                        </td>
+                        <td style={{ width: 110, textAlign: "right" }}>
+                          <button
+                            className="btn btn-sm"
+                            disabled={issuing || !tls.acme.enabled}
+                            onClick={() => issueCerts([host])}
+                          >
+                            {t("sys.tlsIssue")}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="muted" style={{ fontSize: 12 }}>
+                {t("sys.tlsMissingNone")}
+              </div>
+            )}
+            {!tls.acme.enabled ? (
+              <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+                {t("sys.tlsAcmeOff")}
+              </div>
+            ) : tls.missing.some((host) => host.startsWith("*")) ? (
+              <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+                {t("sys.tlsWildcardOnly")}
+              </div>
+            ) : null}
+
+            {tls.queue.length ? (
+              <>
+                <div className="divider" style={{ margin: "14px 0 10px" }} />
+                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>
+                  {t("sys.tlsQueue")}
+                </div>
+                <div className="stack" style={{ gap: 5 }}>
+                  {tls.queue.slice(0, 8).map((item) => (
+                    <div key={item.host} className="row" style={{ gap: 8 }}>
+                      <code className="mono" style={{ fontSize: 11 }}>
+                        {item.host}
+                      </code>
+                      <Pill
+                        tone={
+                          item.state === "done"
+                            ? "ok"
+                            : item.state === "error"
+                              ? "err"
+                              : "warn"
+                        }
+                      >
+                        {item.state}
+                      </Pill>
+                      <span className="muted truncate" style={{ fontSize: 11 }}>
+                        {item.message}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </>
+        ) : null}
+
+        {!tls ? (
+          <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+            {t("sys.gatewayUnknown")}
+          </div>
+        ) : null}
+      </section>
 
       <section className="card card-pad" style={{ marginTop: 16 }}>
         <div className="row" style={{ gap: 8, marginBottom: 12 }}>

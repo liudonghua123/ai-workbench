@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.models import (
     Agent,
     AgentRun,
@@ -114,7 +115,7 @@ def serialize_domain(domain: DomainBinding) -> dict[str, Any]:
         "target": domain.target,
         "is_primary": domain.is_primary,
         "auto_generated": domain.auto_generated,
-        "url": f"http://{domain.fqdn}",
+        "url": f"{settings.gateway_scheme if settings.gateway_active else 'http'}://{domain.fqdn}",
     }
 
 

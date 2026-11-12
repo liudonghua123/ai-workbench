@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
+from app.api.deps import visible_projects
 from app.core.config import settings
 from app.core.db import get_session
-from app.api.deps import visible_projects
 from app.core.ids import port_open
 from app.core.security import Principal, get_principal
+from app.gateway.acme import AcmeError
 from app.gateway.routes import table as route_table
 from app.models import (
     Agent,
@@ -16,12 +17,11 @@ from app.models import (
     DeploymentStatus,
     Event,
     McpServer,
-    Project,
     ProjectStatus,
     Skill,
 )
 from app.providers import registry
-from app.services import llm, sql_guard
+from app.services import certificates, llm, sql_guard
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -189,6 +189,7 @@ def public_settings():
             "upstream_host": settings.gateway_upstream_host,
             "preview_suffix": settings.preview_suffix,
             "route_ttl": settings.gateway_route_ttl,
+            "tls": settings.gateway_tls_mode,
         },
     }
 
@@ -222,6 +223,7 @@ def gateway_status(
         "listening": listening,
         "scheme": settings.gateway_scheme,
         "port": settings.gateway_port,
+        "tls": settings.gateway_tls_mode,
         "bind_host": settings.gateway_bind_host,
         "upstream_host": settings.gateway_upstream_host,
         "domain_suffix": settings.domain_suffix,
@@ -240,8 +242,74 @@ def gateway_status(
     }
 
 
-# --- model / agent runtime -------------------------------------------------
+# --- TLS / certificates ----------------------------------------------------
 
+
+def _routed_hosts(principal: Principal, session: Session) -> list[str]:
+    visible = {project.id for project in visible_projects(session, principal)}
+    return [route.host for route in route_table.snapshot() if route.project_id in visible]
+
+
+@router.get("/tls")
+def tls_status(
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    """What is on disk, what is missing, and what is queued.
+
+    Scoped like the routing table: a principal only sees certificate problems for
+    hosts they can already reach, so an ``own``-scope user does not learn the
+    project names of the whole installation from the expiry list.
+    """
+    try:
+        return certificates.summary(_routed_hosts(principal, session))
+    except Exception as exc:  # noqa: BLE001 - a bad pem must not break the page
+        raise HTTPException(status_code=500, detail=f"读取证书失败：{exc}") from exc
+
+
+@router.post("/tls/issue")
+def tls_issue(
+    payload: dict | None = Body(default=None),
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    """Queue certificate issuance for one host, or for every routed host missing one.
+
+    Nothing is issued here: the request is written to the gateway's queue and the
+    gateway performs the ACME order. Two reasons — the challenge must be served by
+    the process that owns port 80, and a failed issuance must not leave this
+    process holding a half-written certificate.
+    """
+    allowed = set(_routed_hosts(principal, session))
+    requested = (payload or {}).get("hosts")
+    if not requested:
+        requested = [host for host in certificates.summary(allowed)["missing"]]  # type: ignore[arg-type]
+    if isinstance(requested, str):
+        requested = [requested]
+    if not isinstance(requested, list) or not requested:
+        raise HTTPException(status_code=400, detail="没有需要签发的域名")
+
+    queued: list[dict[str, object]] = []
+    errors: list[dict[str, str]] = []
+    for host in requested[:50]:
+        try:
+            queued.append(certificates.request_issue(str(host), allowed=allowed))
+        except AcmeError as exc:
+            errors.append({"host": str(host), "message": str(exc)})
+    if not queued and errors:
+        raise HTTPException(status_code=400, detail=errors[0]["message"])
+    return {"queued": queued, "errors": errors}
+
+
+@router.delete("/tls/issue/{host}")
+def tls_cancel(host: str):
+    removed = certificates.cancel_issue(host)
+    if not removed:
+        raise HTTPException(status_code=404, detail="队列里没有这个域名")
+    return {"ok": True, "host": host}
+
+
+# --- model / agent runtime -------------------------------------------------
 
 @router.get("/llm")
 def llm_status():

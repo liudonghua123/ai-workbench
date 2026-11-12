@@ -6,8 +6,13 @@ Shape
 ``<slug><preview>.<suffix>`` -> 127.0.0.1:<project.dev_port>  (preview)
 
 Both are the *same* socket, which is why a published app has no port in its URL.
-The listener is a plain ASGI app, so it runs under uvicorn like anything else and
-can be fronted by a TLS terminator (or ``cloudflared``) without changes.
+The listener is a plain ASGI app, so it runs under uvicorn like anything else.
+
+TLS is terminated here rather than in front of the gateway: one listener can then
+answer for every tenant with the certificate that matches the SNI name (see
+:mod:`app.gateway.tls`), and http-01 challenges are answered by the same process
+that holds port 80 — no second hook, no reload signal, no race between "the cert
+exists" and "the proxy knows about it".
 
 Three decisions worth knowing about
 -----------------------------------
@@ -68,12 +73,26 @@ CONSOLE_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1", "0.0.0.0"}
 HEALTH_PATH = "/__gateway/health"
 STATUS_PATH = "/__gateway/"
 
+# ACME http-01 answers live under this prefix, *before* routing: a challenge can
+# arrive for a host that is not in the table yet (that is the point — it is how a
+# host becomes trusted in the first place), and it must be answered over plain
+# HTTP on port 80 even when everything else is redirected to https.
+ACME_PREFIX = "/.well-known/acme-challenge/"
+
 
 class Gateway:
     """ASGI application. One instance per process; holds the HTTP client pool."""
 
-    def __init__(self, routes: RouteTable | None = None) -> None:
+    def __init__(
+        self,
+        routes: RouteTable | None = None,
+        *,
+        challenges: object | None = None,
+        redirect_https: bool = False,
+    ) -> None:
         self.routes = routes or default_table
+        self.challenges = challenges
+        self.redirect_https = redirect_https
         self._client: httpx.AsyncClient | None = None
 
     # -- lifecycle -------------------------------------------------------
@@ -120,6 +139,31 @@ class Gateway:
     def _is_console(self, host: str) -> bool:
         return host in CONSOLE_HOSTS or host == normalize_host(settings.domain_suffix)
 
+    async def _challenge(self, token: str, send, scope: dict) -> None:
+        """Answer ``/.well-known/acme-challenge/<token>`` from the challenge store."""
+        token = token.split("?", 1)[0].strip("/")
+        body = None
+        reader = getattr(self.challenges, "read", None)
+        if reader is not None:
+            body = reader(token)
+        if body is None:
+            logger.debug("acme challenge miss: %s", token[:24])
+            await _send_body(send, 404, b"unknown challenge", "text/plain; charset=utf-8")
+            return
+        payload = body.encode("ascii", "ignore")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"text/plain; charset=utf-8"),
+                    (b"content-length", str(len(payload)).encode()),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": payload})
+
     def _console_response(self, path: str, host: str) -> tuple[int, bytes, str]:
         routes = self.routes.snapshot()
         if path.rstrip("/") == HEALTH_PATH.rstrip("/"):
@@ -128,19 +172,34 @@ class Gateway:
                 "host": host,
                 "scheme": settings.gateway_scheme,
                 "port": settings.gateway_port,
+                "tls": settings.gateway_tls_mode,
                 "domain_suffix": settings.domain_suffix,
                 "preview_suffix": settings.preview_suffix,
                 "upstream_host": settings.gateway_upstream_host,
                 "routes": len(routes),
             }
             return 200, json.dumps(payload, ensure_ascii=False).encode(), "application/json"
-        return 200, pages.status_page([r.to_public() for r in routes], host=host), "text/html; charset=utf-8"
+        page = pages.status_page([r.to_public() for r in routes], host=host)
+        return 200, page, "text/html; charset=utf-8"
 
     # -- http ------------------------------------------------------------
     async def _http_request(self, scope, receive, send) -> None:
         headers = _headers(scope)
         host = normalize_host(headers.get(b"host", b"").decode("latin-1"))
         path = _raw_path(scope)
+
+        # ACME first: it must work for hosts that are not routable yet, and it
+        # must never be redirected to https (the CA only speaks plain HTTP).
+        if path.startswith(ACME_PREFIX):
+            await self._challenge(path[len(ACME_PREFIX):], send, scope)
+            return
+
+        if self.redirect_https and not self._is_console(host):
+            query = scope.get("query_string", b"")
+            target = f"https://{host}{path}" + (("?" + query.decode("latin-1")) if query else "")
+            await _send_redirect(send, target)
+            return
+
         route = self.routes.resolve(host)
 
         if route is None:
@@ -288,7 +347,10 @@ class Gateway:
             except ConnectionClosed:
                 pass
 
-        tasks = [asyncio.create_task(client_to_upstream()), asyncio.create_task(upstream_to_client())]
+        tasks = [
+            asyncio.create_task(client_to_upstream()),
+            asyncio.create_task(upstream_to_client()),
+        ]
         try:
             _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
@@ -347,12 +409,15 @@ def _forward_headers(
     out[b"x-real-ip"] = _client_ip(scope, headers).encode("latin-1")
     prior = headers.get(b"x-forwarded-for", b"").decode("latin-1").strip()
     client = _client_ip(scope, {})
-    out[b"x-forwarded-for"] = f"{prior}, {client}".encode("latin-1") if prior else client.encode("latin-1")
+    chain = f"{prior}, {client}" if prior else client
+    out[b"x-forwarded-for"] = chain.encode("latin-1")
     out[b"x-workbench-route"] = f"{route.slug}:{route.environment}".encode()
     return out
 
 
-def _response_headers(response: httpx.Response, route: Route, host: str) -> list[tuple[bytes, bytes]]:
+def _response_headers(
+    response: httpx.Response, route: Route, host: str
+) -> list[tuple[bytes, bytes]]:
     headers: list[tuple[bytes, bytes]] = []
     for key, value in response.headers.raw:
         name = key.lower()
@@ -442,8 +507,30 @@ async def _send_body(send, status: int, body: bytes, content_type: str) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-def create_app() -> Gateway:
-    return Gateway()
+async def _send_redirect(send, target: str) -> None:
+    """308, not 301: a permanent redirect that keeps the method and the body."""
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 308,
+            "headers": [
+                (b"location", target.encode("latin-1")),
+                (b"content-length", b"0"),
+                (b"cache-control", b"no-store"),
+                (b"x-workbench-gateway", b"1"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": b""})
+
+
+def create_app(
+    *,
+    routes: RouteTable | None = None,
+    challenges: object | None = None,
+    redirect_https: bool = False,
+) -> Gateway:
+    return Gateway(routes, challenges=challenges, redirect_https=redirect_https)
 
 
 app = create_app()

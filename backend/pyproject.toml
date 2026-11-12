@@ -11,6 +11,9 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "fastmcp>=2.3.0",
     "httpx>=0.27.0",
+    # certificate parsing, CSRs and the ES256 JWS used by the ACME client; the
+    # gateway works without it when only a wildcard certificate is configured
+    "cryptography>=43.0",
     # the gateway proxies websocket upgrades (vite HMR); uvicorn[standard] brings
     # it in transitively, but we import it directly, so it is declared here
     "websockets>=13.0",

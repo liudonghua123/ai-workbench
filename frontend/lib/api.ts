@@ -36,6 +36,8 @@ import type {
   SqlMode,
   SsoSchema,
   Template,
+  TlsQueueItem,
+  TlsStatus,
   TreeNode,
 } from "./types";
 import { getToken, notifyUnauthorized, tokenQuery } from "./auth";
@@ -92,6 +94,13 @@ export const api = {
   overview: () => request<Overview>("/system/overview"),
   settings: () => request<Settings>("/system/settings"),
   gateway: () => request<GatewayStatus>("/system/gateway"),
+  tls: () => request<TlsStatus>("/system/tls"),
+  issueCert: (hosts?: string[]) =>
+    post<{ queued: TlsQueueItem[]; errors: { host: string; message: string }[] }>(
+      "/system/tls/issue",
+      hosts ? { hosts } : {},
+    ),
+  cancelCert: (host: string) => del(`/system/tls/issue/${encodeURIComponent(host)}`),
   providers: () => request<Record<string, unknown>>("/system/providers"),
   events: (limit = 60) => request<EventItem[]>(`/system/events?limit=${limit}`),
   llm: () => request<LlmStatus>("/system/llm"),

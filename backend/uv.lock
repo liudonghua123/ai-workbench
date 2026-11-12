@@ -2000,6 +2000,7 @@ name = "workbench-api"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "httpx" },
@@ -2020,6 +2021,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=43.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=2.3.0" },
     { name = "httpx", specifier = ">=0.27.0" },

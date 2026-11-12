@@ -344,6 +344,67 @@ export interface GatewayConfig {
   upstream_host: string;
   preview_suffix: string;
   route_ttl: number;
+  tls: TlsMode;
+}
+
+export type TlsMode = "off" | "manual" | "files" | "acme" | "mixed";
+
+/** One certificate as read from disk. */
+export interface TlsCert {
+  hosts: string[];
+  path: string;
+  source: string;
+  issuer: string;
+  serial: string;
+  fingerprint: string;
+  not_before: string;
+  not_after: string;
+  days_left: number;
+  expired: boolean;
+  wildcard: boolean;
+  key_ok: boolean;
+  error: string;
+}
+
+export interface TlsQueueItem {
+  host: string;
+  state: "pending" | "running" | "done" | "error";
+  message: string;
+  requested_at: string;
+  updated_at: string;
+}
+
+/** Certificate state for the settings page. */
+export interface TlsStatus {
+  mode: TlsMode;
+  enabled: boolean;
+  scheme: string;
+  port: number;
+  suffix: string;
+  wildcard: boolean;
+  suffix_covered: boolean;
+  certificate: {
+    directory: string;
+    certs: TlsCert[];
+    count: number;
+    usable: number;
+    primary: TlsCert | null;
+    bootstrap: boolean;
+    expired: number;
+    expiring: number;
+    days_left: number | null;
+  };
+  acme: {
+    enabled: boolean;
+    email: string;
+    directory: string;
+    renew_days: number;
+    staging: boolean;
+  };
+  routed: number;
+  missing: string[];
+  expiring: string[];
+  queue: TlsQueueItem[];
 }
 
 export interface GatewayRoute {

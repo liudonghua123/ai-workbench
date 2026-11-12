@@ -238,12 +238,25 @@ When a project is not running, the gateway answers instead of the kernel:
 The listener is a separate process on purpose: it keeps published apps up while
 the control plane restarts, and it is the only thing that needs a privileged
 port. It holds no state — the route table is the `projects` table, re-read every
-two seconds. Put TLS in front (`WB_GATEWAY_TLS_CERT/KEY`) or run it behind
-`cloudflared` for a public domain; `WB_DOMAIN_BASE_URL` still wins if something
-else already terminates traffic.
+two seconds.
+
+**Two ways to get HTTPS, wildcard first.** Point `WB_GATEWAY_TLS_CERT/KEY` at a
+`*.your-domain` certificate and one file pair covers every project and preview
+host; replacing the files is the rotation procedure (three-second hot reload).
+Or set `WB_GATEWAY_ACME_ENABLED=true` and let the gateway issue and renew each
+host over http-01 (port 80 must be reachable from the internet). One listener
+picks the certificate by SNI — an exact name beats the wildcard, and a key that
+does not match its certificate is reported instead of failing the handshake.
+`WB_DOMAIN_BASE_URL` still wins when something else already terminates traffic.
 
 The project page shows both addresses as bare hosts, and the settings page lists
 the live routing table with a reachability dot per upstream.
+
+The settings page also lays the certificates out: who issued them, how many days
+are left, and which routed hosts still have none — with a button that queues the
+issuance.
+
+![Certificates and HTTPS](docs/screenshots/48-tls.png)
 
 Runbook — ports, TLS, tunnels, failure modes:
 **[docs/gateway.md](docs/gateway.md)**.

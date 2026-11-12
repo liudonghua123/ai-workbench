@@ -49,8 +49,24 @@ class Settings(BaseSettings):
     gateway_bind_host: str = "0.0.0.0"
     gateway_http_port: int = 80
     gateway_https_port: int = 443
+    # A wildcard certificate is the preferred shape: one file pair covers every
+    # project and preview host, nothing is issued at runtime, nothing expires per
+    # project. Point both at the fullchain and the private key.
     gateway_tls_cert: str = ""
     gateway_tls_key: str = ""
+    # Per-host certificates live here (ACME-issued, or dropped in by hand as
+    # <host>.pem + <host>.key). Also holds the ACME account key, its challenges
+    # and the issue queue. Empty -> <data_dir>/tls.
+    gateway_tls_dir: str = ""
+    # http-01 issuance for hosts the wildcard does not cover. Requires port 80 to
+    # be reachable from the internet and the host's A record to point here.
+    gateway_acme_enabled: bool = False
+    gateway_acme_email: str = ""
+    gateway_acme_directory: str = "https://acme-v02.api.letsencrypt.org/directory"
+    gateway_acme_renew_days: int = 30
+    gateway_acme_interval: float = 300.0
+    # 80 -> 443 permanent redirect for everything except ACME challenges
+    gateway_https_redirect: bool = True
     # upstreams are always loopback: the gateway never becomes an open proxy
     gateway_upstream_host: str = "127.0.0.1"
     # how long a Host -> upstream lookup is cached before the DB is re-read
@@ -143,11 +159,61 @@ class Settings(BaseSettings):
         return self.data_dir / "projects"
 
     @property
+    def tls_dir(self) -> Path:
+        """Where per-host certificates, the ACME account and the queue live."""
+        if self.gateway_tls_dir:
+            return Path(os.path.expanduser(self.gateway_tls_dir)).resolve()
+        return self.data_dir / "tls"
+
+    @property
+    def gateway_tls_enabled(self) -> bool:
+        """True when the gateway should speak TLS at all.
+
+        A configured wildcard or an enabled ACME client both count. So does a
+        directory that already holds certificates: dropping ``<host>.pem`` and
+        ``<host>.key`` into it *is* a way to enable TLS, and having the URLs stay
+        ``http://`` in that case would be a lie.
+        """
+        if self.gateway_tls_cert and self.gateway_tls_key:
+            return True
+        if self.gateway_acme_enabled:
+            return True
+        try:
+            return any(path.suffix == ".pem" for path in self.tls_dir.iterdir())
+        except OSError:
+            return False
+
+    @property
+    def gateway_tls_mode(self) -> str:
+        """``manual`` | ``acme`` | ``mixed`` | ``off`` — for the UI and the logs.
+
+        "manual" means "certificates come from files" (a wildcard on the command
+        line, or per-host pairs dropped into the directory); "mixed" means files
+        *and* an ACME client, which is the recommended shape: the wildcard covers
+        everything it can, http-01 fills the gaps.
+        """
+        files = bool(self.gateway_tls_cert and self.gateway_tls_key)
+        acme = bool(self.gateway_acme_enabled)
+        if files and acme:
+            return "mixed"
+        if files:
+            return "manual"
+        if acme:
+            return "mixed" if self._tls_dir_has_certs() else "acme"
+        return "manual" if self._tls_dir_has_certs() else "off"
+
+    def _tls_dir_has_certs(self) -> bool:
+        try:
+            return any(path.suffix == ".pem" for path in self.tls_dir.iterdir())
+        except OSError:
+            return False
+
+    @property
     def gateway_scheme(self) -> str:
         """Scheme published URLs use when the built-in gateway serves them."""
         if self.gateway_public_scheme:
             return self.gateway_public_scheme
-        return "https" if (self.gateway_tls_cert and self.gateway_tls_key) else "http"
+        return "https" if self.gateway_tls_enabled else "http"
 
     @property
     def gateway_port(self) -> int:

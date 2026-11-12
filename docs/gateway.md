@@ -56,6 +56,76 @@ ingress:
   - service: http_status:404
 ```
 
+## HTTPS 与证书
+
+两种方式，**通配符优先**：
+
+| 方式 | 需要什么 | 适合 |
+| --- | --- | --- |
+| 通配符证书 | `*.你的域名` 的 fullchain + 私钥 | 首选。一次覆盖全部项目与预览域名，将来新建的项目也自动包含 |
+| http-01 自动签发 | 80 端口对公网可达、`*.<后缀>` 的 A 记录指向本机、一个邮箱 | 通配符覆盖不到的域名（客户自带域名、后缀外的域名） |
+
+两者可以同时开：通配符负责后缀内的一切，自动签发只补它覆盖不到的名字。
+
+### 通配符证书（推荐）
+
+```bash
+python -m app.gateway --tls-cert /etc/ssl/apps/fullchain.pem --tls-key /etc/ssl/apps/key.pem
+# 或者写进 .env，重启即生效
+WB_GATEWAY_TLS_CERT=/etc/ssl/apps/fullchain.pem
+WB_GATEWAY_TLS_KEY=/etc/ssl/apps/key.pem
+```
+
+也可以把 `<域名>.pem` + `<域名>.key` 直接放进 `WB_GATEWAY_TLS_DIR`（默认
+`data/tls/`）——目录里的证书按域名被 SNI 选中，适合"一个域名一张证书"的场景。
+
+证书解析出来的域名、签发者、到期天数会出现在启动横幅、`GET /system/tls` 和设置页：
+
+```
+certificate  *.apps.example.com  issuer=Let's Encrypt  71d left  key_ok=True
+```
+
+`key_ok=False` 表示 pem 与私钥不是一对，网关不会用它（状态页会写出来）。
+这条检查值一次上线：把旧证书配新私钥，握手失败的报错在浏览器里完全没有信息量。
+
+证书热加载，**不需要重启**：文件 mtime 变化后 3 秒内自动生效，换证书只要覆盖文件。
+
+### 自动签发（http-01）
+
+```bash
+WB_GATEWAY_ACME_ENABLED=true
+WB_GATEWAY_ACME_EMAIL=ops@example.com
+# 先对 staging 跑一遍，避免把正式环境的速率限制打掉
+WB_GATEWAY_ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory
+```
+
+启动后：
+
+```bash
+python -m app.gateway acme --status      # 已有哪些证书、几天后到期、队列里有什么
+python -m app.gateway acme --all         # 为所有缺失/即将过期的项目域名签发
+python -m app.gateway acme --host shop.example.com
+```
+
+网关在跑的时候不用手动敲命令：续期循环每 `WB_GATEWAY_ACME_INTERVAL`（默认 300 秒）
+检查一次，剩余天数低于 `WB_GATEWAY_ACME_RENEW_DAYS`（默认 30）就重新签；
+设置页的「签发」按钮写的是同一条队列（`data/tls/queue/`），由网关执行。
+
+**通配符不能走 http-01**：`*.example.com` 只能用 DNS-01 验证，需要 DNS 服务商的
+凭据。本仓库不实现 DNS-01，遇到 `*.` 会直接说明并让你改用通配符证书，而不是
+发一个注定失败的订单。
+
+排障要点：
+
+- 80 端口必须能从**公网**访问：`curl -v http://<域名>/.well-known/acme-challenge/test`
+  应该看到 404（网关答的 404，不是运营商/防火墙的）。CDN 或 WAF 挡在前面时，
+  challenge 可能被拦掉。
+- 只签"网关知道"的域名：后缀内的项目域名会自动纳入，自定义域名需要在设置页点
+  「签发」——先确认它的 DNS 已经指着这台机器。
+- 每张证书约 90 天，续期阈值 30 天；失败不会中断服务，旧的（可能刚过期的）证书
+  还挂在 443 上，错误写在队列条目里。
+- 两边进程共享 `data/tls`。多机部署时网关只有一台，证书目录需要挂同一个卷。
+
 ## 排障
 
 | 现象 | 先看什么 |

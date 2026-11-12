@@ -164,7 +164,7 @@ function watch(page) {
 /** Fresh context with the given preferences already in localStorage. */
 async function context(
   browser,
-  { locale = "en", nav = "rail", theme = "light", token = "", phone = false } = {},
+  { locale = "en", nav = "rail", theme = "light", token = "", phone = false, insecure = false } = {},
 ) {
   const ctx = await browser.newContext({
     viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 },
@@ -172,6 +172,8 @@ async function context(
     isMobile: phone,
     hasTouch: phone,
     colorScheme: theme === "dark" ? "dark" : "light",
+    // only for the TLS capture: a self-signed certificate is the subject there
+    ignoreHTTPSErrors: insecure,
   });
   await ctx.addInitScript(
     ({ locale, nav, theme, token }) => {
@@ -467,6 +469,26 @@ const run = async () => {
       }
       await ctx.close();
     }
+  }
+
+  // ------------------------------------------------------------ certificates
+  {
+    // The card is below the fold on purpose: it is configuration, not a dashboard.
+    const { ctx, page } = await context(browser, { token });
+    await page.goto(`${WEB}/settings`, { waitUntil: "networkidle" });
+    const card = page.locator('[data-shot="tls"]');
+    const found = await card.waitFor({ timeout: 15_000 }).then(() => true).catch(() => false);
+    if (!found) {
+      problems.push("certificate card never rendered");
+    } else {
+      await card.scrollIntoViewIfNeeded().catch(() => undefined);
+      await page.waitForTimeout(500);
+      await card.screenshot({ path: `${OUT}48-tls.png` }).catch(() => {
+        problems.push("could not capture the certificate card");
+      });
+      steps.push("  ✓ 48-tls                   certificates: wildcard first, http-01 for the rest");
+    }
+    await ctx.close();
   }
 
   // ------------------------------------------------------------- signed out
