@@ -92,6 +92,37 @@ export function isWildcard(role: Pick<OrgRole, "permissions">): boolean {
   return (role.permissions ?? []).includes("*");
 }
 
+/**
+ * Data scope label.
+ *
+ * The catalog ships the label and the help text; falling back to the raw key
+ * keeps a role created by a newer backend renderable by an older bundle.
+ */
+export function scopeLabel(
+  catalog: PermissionCatalog | null,
+  key: string,
+  locale: Locale,
+): string {
+  const scope = catalog?.data_scopes?.find((item) => item.key === key);
+  if (!scope) return key;
+  return locale === "zh" ? scope.label_zh || scope.label : scope.label;
+}
+
+export function scopeDescription(
+  catalog: PermissionCatalog | null,
+  key: string,
+  locale: Locale,
+): string {
+  const scope = catalog?.data_scopes?.find((item) => item.key === key);
+  if (!scope) return "";
+  return locale === "zh" ? scope.description_zh || scope.description : scope.description;
+}
+
+/** "all" widens a role to the whole organization; anything else is "own". */
+export function isOrgWide(scope?: string): boolean {
+  return (scope || "all") === "all";
+}
+
 /** A role with more permissions than this gets a collapsed summary. */
 export const PERMISSION_PREVIEW = 6;
 

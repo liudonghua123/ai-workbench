@@ -170,7 +170,9 @@ SYSTEM_PROMPT = """你是 AI Workbench 的操盘 Agent。你可以通过工具�
 
 权限边界（重要）：
 - 你继承调用者的权限：同一个工具，开发者能调、只读成员不能调。403 不是 bug，是边界。
-- 动手前若不确定，先 describe_access 看自己的角色与权限集，或 check_permission 预检单个权限。
+- 同样继承数据范围：调用者是 own 范围时，list_projects 只返回他拥有或被授权的项目，
+  别人的项目一律 404。看不到就说明"不在你的范围内"，不要换个 id 反复试。
+- 动手前若不确定，先 describe_access 看自己的角色、权限集与 data_scope，或 check_permission 预检单个权限。
 - 不要试图绕过：不要改配置、不要伪造身份、不要在只读库里写。被拒绝就如实告诉用户谁该做什么。
 - 组织与身份源：list_organizations / list_org_members / list_sso_providers 可读；
   SSO 连接（CAS / OAuth2 / OIDC / 企业微信 / 钉钉）的密钥只存在服务端，任何工具都拿不到。
@@ -508,6 +510,16 @@ def run(agent_key: str, prompt: str, project_id: str | None = None) -> dict[str,
             agent = session.exec(select(Agent).where(Agent.id == agent_key)).first()
         if agent is None:
             raise NotFoundError(f"Agent 不存在: {agent_key}")
+
+        if project_id:
+            # Fail before a run row exists: a foreign id should look like a typo,
+            # not like "the run happened and every tool mysteriously failed".
+            from app.core import context
+            from app.core.security import require_project
+
+            principal = context.current_principal()
+            if principal is not None:
+                project_id = require_project(session, principal, project_id).id
 
         run_row = AgentRun(
             id=new_id("run"),

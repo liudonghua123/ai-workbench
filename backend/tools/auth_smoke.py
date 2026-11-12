@@ -254,19 +254,133 @@ def main() -> int:
         )
         check(bad.status_code == 403, "未知权限被拒绝", str(bad.status_code))
 
+        # --- data scope: a role reaches only the rows it owns ----------------
+        # A second project owned by the org owner, so "not yours" has a target.
+        sibling = client.post(
+            f"{BASE}/projects",
+            headers=owner_headers,
+            json={"name": "acme sibling", "template_key": "frontend-vite-react",
+                  "slug": f"acme-sibling-{RUN}"},
+        )
+        sibling_id = sibling.json().get("id", "") if sibling.status_code == 201 else ""
+        check(sibling.status_code == 201, "所有者可再建一个项目", str(sibling.status_code))
+
+        # the session is pinned to the org it logged into; listing is scoped to it
+        client.post(
+            f"{BASE}/auth/switch-org", headers=viewer_headers, json={"org_id": owner_org["id"]}
+        )
+        own_view = client.get(f"{BASE}/projects", headers=viewer_headers).json()
+        check(
+            [p["id"] for p in own_view] == [acme_project_id],
+            "own 范围只列出被授权的项目",
+            str([p["slug"] for p in own_view]),
+        )
+        overview = client.get(f"{BASE}/system/overview", headers=viewer_headers).json()
+        check(
+            overview.get("counts", {}).get("projects") == 1,
+            "概览计数遵守数据范围（不是全库数量）",
+            str(overview.get("counts", {}).get("projects")),
+        )
+        check(
+            client.get(f"{BASE}/projects/{sibling_id}", headers=viewer_headers).status_code == 404,
+            "未授权的项目详情 → 404",
+        )
+        check(
+            client.get(
+                f"{BASE}/projects/{sibling_id}/file",
+                headers=viewer_headers,
+                params={"path": "README.md"},
+            ).status_code
+            == 404,
+            "未授权项目读文件 → 404",
+        )
+        # A viewer has no ``code:write`` at all, so the middleware answers 403
+        # before the handler could answer 404. Either way it is a refusal; the
+        # scope-specific 404 is asserted below with a developer, who *can* write.
+        check(
+            client.put(
+                f"{BASE}/projects/{sibling_id}/file",
+                headers=viewer_headers,
+                json={"path": "note.txt", "content": "x"},
+            ).status_code
+            in (403, 404),
+            "viewer 写他人项目被拒绝（缺 code:write → 403）",
+        )
+        check(
+            client.get(f"{BASE}/projects/{acme_project_id}", headers=viewer_headers).status_code
+            == 200,
+            "被授权的项目可以打开",
+        )
+
+        owner_view = client.get(f"{BASE}/projects", headers=owner_headers).json()
+        check(
+            {acme_project_id, sibling_id} <= {p["id"] for p in owner_view},
+            "all 范围能看到组织内全部项目",
+            f"{len(owner_view)} 个项目",
+        )
+
+        # an own-scoped developer creates their own project and still cannot see
+        # the owner's — the boundary follows the row, not the role name
+        dev_invite = client.post(
+            f"{BASE}/orgs/{owner_org['id']}/invitations",
+            headers=owner_headers,
+            json={"email": DEV_EMAIL, "role_key": "developer"},
+        )
+        check(dev_invite.status_code == 201, "邀请 developer 进入组织", str(dev_invite.status_code))
+        if dev_invite.status_code == 201:
+            client.post(
+                f"{BASE}/invitations/accept",
+                headers=headers,
+                json={"token": dev_invite.json()["accept_token"]},
+            )
+            client.post(f"{BASE}/auth/switch-org", headers=headers,
+                        json={"org_id": owner_org["id"]})
+            before = client.get(f"{BASE}/projects", headers=headers).json()
+            check(before == [], "developer 初入组织看不到他人项目", str(len(before)))
+            dev_project = client.post(
+                f"{BASE}/projects",
+                headers=headers,
+                json={"name": "dev own", "template_key": "frontend-vite-react",
+                      "slug": f"dev-own-{RUN}"},
+            )
+            dev_project_id = dev_project.json().get("id", "") if dev_project.status_code == 201 else ""
+            after_own = client.get(f"{BASE}/projects", headers=headers).json()
+            check(
+                [p["id"] for p in after_own] == [dev_project_id],
+                "开发者只看到自己建的项目",
+                str([p["slug"] for p in after_own]),
+            )
+            check(
+                client.get(f"{BASE}/projects/{acme_project_id}", headers=headers).status_code == 404,
+                "开发者访问所有者的项目 → 404",
+            )
+            # the developer *does* hold code:write — the refusal here comes from
+            # the data scope, which is exactly what this section is about
+            check(
+                client.put(
+                    f"{BASE}/projects/{acme_project_id}/file",
+                    headers=headers,
+                    json={"path": "note.txt", "content": "x"},
+                ).status_code
+                == 404,
+                "开发者写所有者的项目 → 404（范围拒绝，不是权限拒绝）",
+            )
+
         # --- session management ---------------------------------------------
         logout = client.post(f"{BASE}/auth/logout", headers=viewer_headers)
         check(logout.status_code == 200, "登出成功", str(logout.status_code))
         stale = client.get(f"{BASE}/projects", headers=viewer_headers)
         check(stale.status_code == 401, "登出后令牌立即失效", str(stale.status_code))
 
-        # cleanup: remove the smoke projects so reruns stay clean
-        if project_id:
-            client.delete(f"{BASE}/projects/{project_id}?purge_files=true", headers=headers)
-        if acme_project_id:
-            client.delete(
-                f"{BASE}/projects/{acme_project_id}?purge_files=true", headers=owner_headers
-            )
+        # Cleanup archives instead of purging: deleting a workspace directory goes
+        # through the sandbox's safe-delete shim and can take the process with it.
+        for pid, hdrs in (
+            (project_id, headers),
+            (acme_project_id, owner_headers),
+            (sibling_id, owner_headers),
+        ):
+            if pid:
+                client.post(f"{BASE}/projects/{pid}/archive", headers=hdrs)
 
     passed = sum(1 for ok, _, _ in results if ok)
     print(f"\n{passed}/{len(results)} 通过")

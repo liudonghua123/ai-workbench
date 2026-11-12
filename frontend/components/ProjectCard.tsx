@@ -5,12 +5,18 @@ import { Icon } from "./Icon";
 import { CopyButton, Pill, StatusPill } from "./ui";
 import { PROJECT_STATUS, TYPE_ICON, TYPE_LABEL, clockTime, relativeTime } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
+import { useSession } from "@/lib/session";
 import type { Project } from "@/lib/types";
 
 export function ProjectCard({ project, compact }: { project: Project; compact?: boolean }) {
   const { t, locale } = useI18n();
+  const { me, seesAll } = useSession();
   const deploy = project.deployment;
   const typeKey = TYPE_LABEL[project.type];
+  // Only meaningful for a narrowed scope: with scope=all every card is somebody
+  // in the org's project, and labelling all of them would be noise.
+  const shared =
+    !seesAll && !!project.owner_id && project.owner_id !== me?.user?.id ? project.owner_name : "";
 
   return (
     <Link href={`/projects/${project.id}`} className="project-card">
@@ -45,6 +51,11 @@ export function ProjectCard({ project, compact }: { project: Project; compact?: 
           </span>
         ))}
         {project.resources.length === 0 ? <span className="tag">{t("common.noResources")}</span> : null}
+        {shared ? (
+          <span className="tag" title={t("proj.granted")}>
+            <Icon name="user" size={10} /> {shared}
+          </span>
+        ) : null}
       </div>
 
       <div className="project-foot">

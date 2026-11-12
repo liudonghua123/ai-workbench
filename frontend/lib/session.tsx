@@ -38,6 +38,8 @@ type SessionApi = {
   activeOrg: Organization | null;
   permissions: string[];
   can: (permission: string) => boolean;
+  /** true when the role reaches every project in the org (data scope = all) */
+  seesAll: boolean;
   refresh: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -127,6 +129,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const permissions = useMemo(() => me?.principal.permissions ?? [], [me]);
 
+  // Data scope is separate from permissions: a viewer may only *read*, yet a
+  // viewer with scope=all reads every project. The API is the authority; this
+  // flag only decides whether the UI says "yours" or "granted to you".
+  const seesAll = useMemo(() => {
+    const principal = me?.principal;
+    if (!principal) return false;
+    return (
+      principal.anonymous ||
+      principal.is_platform_admin ||
+      (principal.data_scope ?? "all") === "all"
+    );
+  }, [me]);
+
   const can = useCallback(
     (permission: string) => {
       if (!me) return false;
@@ -149,11 +164,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       activeOrg,
       permissions,
       can,
+      seesAll,
       refresh,
       switchOrg,
       logout,
     }),
-    [me, loading, authRequired, needsLogin, offline, activeOrg, permissions, can, refresh, switchOrg, logout],
+    [me, loading, authRequired, needsLogin, offline, activeOrg, permissions, can, seesAll, refresh, switchOrg, logout],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

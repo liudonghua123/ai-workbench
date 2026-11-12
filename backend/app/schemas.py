@@ -148,6 +148,8 @@ class RoleUpsert(BaseModel):
     description: str = ""
     permissions: list[str] = []
     rank: int = 20
+    # "all" | "own" — which projects members of this role may see and edit
+    data_scope: str = ""
 
 
 class BindingCreate(BaseModel):

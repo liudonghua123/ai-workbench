@@ -64,8 +64,24 @@ def ensure_builtin_roles(session: Session, org: Organization) -> list[Role]:
     """Seed the five builtin roles for one organization (idempotent)."""
     existing = {row.key: row for row in session.exec(select(Role).where(Role.org_id == org.id)).all()}
     created: list[Role] = []
+    healed = False
     for spec in perms.BUILTIN_ROLES:
         if spec.key in existing:
+            row = existing[spec.key]
+            # Rows seeded before data scopes existed carry an empty value; labels
+            # ship with the catalog and are refreshed, because a builtin role's
+            # description is documentation, not user content. Permissions are
+            # *not* touched: those may have been edited deliberately.
+            changed = False
+            if not row.data_scope:
+                row.data_scope = spec.data_scope
+                changed = True
+            if (row.name, row.description, row.rank) != (spec.name, spec.description, spec.rank):
+                row.name, row.description, row.rank = spec.name, spec.description, spec.rank
+                changed = True
+            if changed:
+                session.add(row)
+                healed = True
             continue
         role = Role(
             id=new_id("rol"),
@@ -76,10 +92,11 @@ def ensure_builtin_roles(session: Session, org: Organization) -> list[Role]:
             permissions=list(spec.grants),
             builtin=True,
             rank=spec.rank,
+            data_scope=spec.data_scope,
         )
         session.add(role)
         created.append(role)
-    if created:
+    if created or healed:
         session.commit()
     return created
 

@@ -8,6 +8,7 @@ import { CopyButton, Empty, Skeleton, StatusPill, Tabs, useToast } from "@/compo
 import { api } from "@/lib/api";
 import { DEPLOY_STATUS, PROJECT_STATUS, TYPE_ICON, TYPE_LABEL, cx } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
+import { useSession } from "@/lib/session";
 import type { Deployment, EnvVar, Project } from "@/lib/types";
 import { DataTab, DeployTab, OverviewTab, SettingsTab } from "./tabs";
 import { CodeTab, ConventionsTab, PreviewTab, VersionTab } from "./workspace";
@@ -29,6 +30,7 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const { push } = useToast();
   const { t } = useI18n();
+  const { can } = useSession();
   const projectId = params?.id as string;
 
   const [project, setProject] = useState<Project | null>(null);
@@ -175,6 +177,11 @@ export default function ProjectDetailPage() {
             <span className="tag">{project.template_key}</span>
             <span className="tag">:{project.port}</span>
             {project.git_initialized ? <span className="tag">git</span> : null}
+            {project.owner_name ? (
+              <span className="tag" title={t("proj.owner")}>
+                <Icon name="user" size={10} /> {project.owner_name}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="spacer" />
@@ -185,10 +192,12 @@ export default function ProjectDetailPage() {
           <span style={{ display: "inline-flex" }}>
             <CopyButton value={project.url} label={t("common.copyUrl")} />
           </span>
-          <button className="btn btn-accent" onClick={deploy} disabled={deploying || busy}>
-            <Icon name={busy ? "refresh" : "rocket"} size={13} />
-            {busy ? t("detail.deploying") : deploying ? t("detail.submitting") : t("detail.deploy")}
-          </button>
+          {can("deploy:run") ? (
+            <button className="btn btn-accent" onClick={deploy} disabled={deploying || busy}>
+              <Icon name={busy ? "refresh" : "rocket"} size={13} />
+              {busy ? t("detail.deploying") : deploying ? t("detail.submitting") : t("detail.deploy")}
+            </button>
+          ) : null}
         </div>
       </div>
 

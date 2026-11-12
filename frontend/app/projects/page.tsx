@@ -8,6 +8,7 @@ import { Empty, Pill, Skeleton } from "@/components/ui";
 import { api } from "@/lib/api";
 import { cx } from "@/lib/format";
 import { useI18n, type MessageKey } from "@/lib/i18n";
+import { useSession } from "@/lib/session";
 import type { Project } from "@/lib/types";
 
 const FILTERS: { key: string; labelKey: MessageKey }[] = [
@@ -20,6 +21,7 @@ const FILTERS: { key: string; labelKey: MessageKey }[] = [
 
 export default function ProjectsPage() {
   const { t } = useI18n();
+  const { seesAll, can } = useSession();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -54,6 +56,7 @@ export default function ProjectsPage() {
         <div>
           <h1 className="page-title">{t("proj.title")}</h1>
           <p className="page-desc">{t("proj.desc")}</p>
+          {!seesAll ? <p className="hint">{t("proj.scopeNote")}</p> : null}
         </div>
         <div className="spacer" />
         <div className="row" style={{ gap: 8 }}>
@@ -69,9 +72,11 @@ export default function ProjectsPage() {
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <button className="btn btn-primary" onClick={() => setOpen(true)}>
-            <Icon name="plus" size={14} /> {t("proj.new")}
-          </button>
+          {can("project:create") ? (
+            <button className="btn btn-primary" onClick={() => setOpen(true)}>
+              <Icon name="plus" size={14} /> {t("proj.new")}
+            </button>
+          ) : null}
         </div>
       </div>
 

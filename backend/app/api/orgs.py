@@ -121,6 +121,27 @@ def _role_for_org(session: Session, org: Organization, key: str) -> Role:
     return row
 
 
+def _role_payload(row: Role, members: int = 0) -> dict:
+    """One role as the UI needs it: permission set *and* data scope."""
+    expanded = perms.expand(row.permissions)
+    return {
+        "id": row.id,
+        "key": row.key,
+        "name": row.name,
+        # builtins carry a translated label; custom roles keep what was typed
+        "name_zh": _localized(row.key, row.name, "name_zh"),
+        "description": row.description,
+        "description_zh": _localized(row.key, row.description, "description_zh"),
+        "permissions": row.permissions,
+        "expanded": sorted(expanded),
+        "count": len(expanded),
+        "builtin": row.builtin,
+        "rank": row.rank,
+        "data_scope": perms.resolve_scope(row.data_scope),
+        "members": members,
+    }
+
+
 # --------------------------------------------------------------------------
 # organizations
 # --------------------------------------------------------------------------
@@ -529,24 +550,7 @@ def list_roles(
     counts = {}
     for membership in session.exec(select(Membership).where(Membership.org_id == org.id)).all():
         counts[membership.role_key] = counts.get(membership.role_key, 0) + 1
-    items = [
-        {
-            "id": row.id,
-            "key": row.key,
-            "name": row.name,
-            # builtins carry a translated label; custom roles keep what was typed
-            "name_zh": _localized(row.key, row.name, "name_zh"),
-            "description": row.description,
-            "description_zh": _localized(row.key, row.description, "description_zh"),
-            "permissions": row.permissions,
-            "expanded": sorted(perms.expand(row.permissions)),
-            "count": len(perms.expand(row.permissions)),
-            "builtin": row.builtin,
-            "rank": row.rank,
-            "members": counts.get(row.key, 0),
-        }
-        for row in rows
-    ]
+    items = [_role_payload(row, counts.get(row.key, 0)) for row in rows]
     items.sort(key=lambda item: -item["rank"])
     return items
 
@@ -577,6 +581,7 @@ def create_role(
         permissions=grants,
         builtin=False,
         rank=payload.rank,
+        data_scope=perms.resolve_scope(payload.data_scope),
     )
     session.add(row)
     session.commit()
@@ -584,15 +589,10 @@ def create_role(
     audit.record(
         session, "role.created", actor_id=principal.user_id, actor_name=principal.name,
         org_id=org.id, resource_type="role", resource_id=row.id,
-        detail={"key": key, "permissions": grants}, commit=True,
+        detail={"key": key, "permissions": grants, "data_scope": row.data_scope},
+        commit=True,
     )
-    return {"id": row.id, "key": row.key, "name": row.name,
-            "name_zh": _localized(row.key, row.name, "name_zh"),
-            "description": row.description,
-            "description_zh": _localized(row.key, row.description, "description_zh"),
-            "permissions": row.permissions, "expanded": sorted(perms.expand(row.permissions)),
-            "count": len(perms.expand(row.permissions)), "builtin": False, "rank": row.rank,
-            "members": 0}
+    return _role_payload(row)
 
 
 @router.patch("/orgs/{org_id}/roles/{role_id}")
@@ -618,6 +618,10 @@ def update_role(
         row.name = payload.name
     if payload.description is not None:
         row.description = payload.description
+    if payload.data_scope and row.key != "owner":
+        # the owner role must keep the whole organization in view, otherwise the
+        # last admin can hide the workbench from themselves
+        row.data_scope = perms.resolve_scope(payload.data_scope)
     row.rank = payload.rank
     session.add(row)
     session.commit()
@@ -625,15 +629,12 @@ def update_role(
     audit.record(
         session, "role.updated", actor_id=principal.user_id, actor_name=principal.name,
         org_id=org.id, resource_type="role", resource_id=row.id,
-        detail={"permissions": row.permissions}, commit=True,
+        detail={"permissions": row.permissions, "data_scope": row.data_scope}, commit=True,
     )
-    return {"id": row.id, "key": row.key, "name": row.name,
-            "name_zh": _localized(row.key, row.name, "name_zh"),
-            "description": row.description,
-            "description_zh": _localized(row.key, row.description, "description_zh"),
-            "permissions": row.permissions, "expanded": sorted(perms.expand(row.permissions)),
-            "count": len(perms.expand(row.permissions)), "builtin": row.builtin,
-            "rank": row.rank, "members": 0}
+    members = session.exec(
+        select(Membership).where(Membership.org_id == org.id, Membership.role_key == row.key)
+    ).all()
+    return _role_payload(row, len(members))
 
 
 @router.delete("/orgs/{org_id}/roles/{role_id}", status_code=204)

@@ -343,6 +343,10 @@ class Role(_Base, table=True):
     name: str
     description: str = ""
     permissions: list[str] = Field(default_factory=list, sa_column=Column(JSON, default=list))
+    # data scope: "all" sees every project in the org, "own" only the projects the
+    # holder owns or was granted. Functional permissions say *what* may be done,
+    # this says *whose* rows it may be done to.
+    data_scope: str = "own"
     builtin: bool = False
     rank: int = 10
     created_at: datetime = Field(default_factory=utcnow)

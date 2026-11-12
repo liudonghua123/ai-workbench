@@ -138,7 +138,16 @@ def catalog() -> dict[str, Any]:
          "items": [p for p in PERMISSIONS if p["group"] == key]}
         for key, (label_en, label_zh) in GROUPS.items()
     ]
-    return {"groups": groups, "permissions": PERMISSIONS, "total": len(PERMISSIONS)}
+    return {
+        "groups": groups,
+        "permissions": PERMISSIONS,
+        "total": len(PERMISSIONS),
+        "data_scopes": [
+            {"key": key, "label": label_en, "label_zh": label_zh,
+             "description": desc_en, "description_zh": desc_zh}
+            for key, (label_en, label_zh, desc_en, desc_zh) in DATA_SCOPES.items()
+        ],
+    }
 
 
 # --------------------------------------------------------------------------
@@ -194,6 +203,43 @@ def may(permissions: frozenset[str], needed: str) -> bool:
 _READ_ALL = sorted(key for key in PERMISSION_KEYS if key.endswith(":read"))
 
 
+# --------------------------------------------------------------------------
+# data scope — *which rows*, not *which actions*
+# --------------------------------------------------------------------------
+
+# Functional permissions answer "may you deploy?"; data scope answers "whose
+# projects may you touch?". They multiply: a developer with ``own`` scope may
+# deploy, but only the projects they own (or were granted). Keeping the two
+# apart is what stops the role matrix from growing a dimension for every
+# combination of "can deploy" × "on whose work".
+DATA_SCOPES: dict[str, tuple[str, str, str, str]] = {
+    # key -> (label_en, label_zh, description_en, description_zh)
+    "all": (
+        "Whole organization",
+        "全组织",
+        "Every project in the organization — what a super admin needs.",
+        "可以看到并操作组织内的全部项目（超级管理员）。",
+    ),
+    "own": (
+        "Only their own",
+        "仅本人",
+        "Only projects they created, plus any project explicitly granted to them.",
+        "只能看到自己创建的项目，以及被单独授权的项目。",
+    ),
+}
+DEFAULT_DATA_SCOPE = "own"
+
+
+def resolve_scope(value: str | None) -> str:
+    """Normalise a stored/API value; unknown values fall back to ``own``.
+
+    Fail closed: a role saved under a newer catalog must not silently become
+    "see everything" on an older binary.
+    """
+    key = (value or "").strip().lower()
+    return key if key in DATA_SCOPES else DEFAULT_DATA_SCOPE
+
+
 @dataclass(frozen=True, slots=True)
 class BuiltinRole:
     key: str
@@ -203,6 +249,7 @@ class BuiltinRole:
     description_zh: str
     rank: int
     grants: list[str]
+    data_scope: str = DEFAULT_DATA_SCOPE
 
     def to_public(self) -> dict[str, Any]:
         expanded = expand(self.grants)
@@ -217,6 +264,7 @@ class BuiltinRole:
             "grants": list(self.grants),
             "permissions": sorted(expanded),
             "count": len(expanded),
+            "data_scope": self.data_scope,
         }
 
 
@@ -225,26 +273,28 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         key="owner",
         name="Owner",
         name_zh="所有者",
-        description="Full control, including deleting the organization and its billing.",
-        description_zh="完全控制，含删除组织与计费设置。",
+        description="Full control of every project, including deleting the organization.",
+        description_zh="全组织全项目的完全控制，含删除组织。",
         rank=100,
         grants=["*"],
+        data_scope="all",
     ),
     BuiltinRole(
         key="admin",
         name="Admin",
         name_zh="管理员",
-        description="Everything except destroying the organization.",
-        description_zh="除删除组织外的一切权限。",
+        description="Everything except destroying the organization, across all projects.",
+        description_zh="除删除组织外的一切权限，可管理全部项目。",
         rank=80,
         grants=[key for key in PERMISSION_KEYS if key != "org:delete"],
+        data_scope="all",
     ),
     BuiltinRole(
         key="developer",
         name="Developer",
         name_zh="开发者",
-        description="Build projects: code, preview, deploy, publish, query data.",
-        description_zh="构建项目：改代码、调试、部署、发布、查数据。",
+        description="Build their own projects: code, preview, deploy, publish, query data.",
+        description_zh="构建自己的项目：改代码、调试、部署、发布、查数据。",
         rank=60,
         grants=[
             *_READ_ALL,
@@ -266,8 +316,8 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         key="operator",
         name="Operator",
         name_zh="运维",
-        description="Ship what developers built; cannot touch code or access control.",
-        description_zh="只负责把开发者做的东西发出去，不碰代码与访问控制。",
+        description="Ship projects granted to them; cannot touch code or access control.",
+        description_zh="负责把授权给自己的项目发出去，不碰代码与访问控制。",
         rank=40,
         grants=[
             *_READ_ALL,
@@ -281,8 +331,8 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
         key="viewer",
         name="Viewer",
         name_zh="只读",
-        description="Read-only: dashboards, code, logs, data.",
-        description_zh="只读：看板、代码、日志、数据。",
+        description="Read-only on their own projects: dashboards, code, logs, data.",
+        description_zh="对自己的项目只读：看板、代码、日志、数据。",
         rank=10,
         grants=list(_READ_ALL),
     ),
@@ -304,6 +354,12 @@ def role_permissions(key: str, extra: list[str] | None = None) -> frozenset[str]
 def role_label(key: str) -> tuple[str, str]:
     builtin = BUILTIN_BY_KEY.get(key)
     return (builtin.name, builtin.name_zh) if builtin else (key, key)
+
+
+def role_scope(key: str) -> str:
+    """Data scope declared for a builtin role; custom roles carry their own row."""
+    builtin = BUILTIN_BY_KEY.get(key)
+    return builtin.data_scope if builtin else DEFAULT_DATA_SCOPE
 
 
 # --------------------------------------------------------------------------
@@ -443,4 +499,5 @@ def describe() -> dict[str, Any]:
         "groups": len(GROUPS),
         "roles": [role.to_public() for role in BUILTIN_ROLES],
         "wildcards": ["*", "<domain>:*"],
+        "data_scopes": sorted(DATA_SCOPES),
     }

@@ -14,7 +14,15 @@ import { useState } from "react";
 import { Icon } from "@/components/Icon";
 import { Empty, Pill, useToast } from "@/components/ui";
 import { PermissionChips, PermissionPicker } from "@/components/access/PermissionPicker";
-import { isWildcard, roleDescription, roleName, roleTone } from "@/lib/access";
+import {
+  isOrgWide,
+  isWildcard,
+  roleDescription,
+  roleName,
+  roleTone,
+  scopeDescription,
+  scopeLabel,
+} from "@/lib/access";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
@@ -29,6 +37,7 @@ type Draft = {
   permissions: string[];
   builtin: boolean;
   members: number;
+  data_scope: string;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -38,6 +47,8 @@ const EMPTY_DRAFT: Draft = {
   permissions: [],
   builtin: false,
   members: 0,
+  // new roles start narrow: widening a role is a deliberate checkbox, not a default
+  data_scope: "own",
 };
 
 export function RolesPanel({
@@ -58,6 +69,14 @@ export function RolesPanel({
   const manage = can("role:manage");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
+  // the catalog owns the wording; the fallback keeps the select usable while the
+  // catalog is still loading
+  const scopes = catalog?.data_scopes?.length
+    ? catalog.data_scopes
+    : [
+        { key: "own", label: "Only their own projects", description: "" },
+        { key: "all", label: "Every project in the organization", description: "" },
+      ];
 
   const edit = (role: OrgRole) =>
     setDraft({
@@ -69,6 +88,7 @@ export function RolesPanel({
       permissions: role.permissions,
       builtin: role.builtin,
       members: role.members ?? 0,
+      data_scope: role.data_scope || "all",
     });
 
   const save = async () => {
@@ -81,6 +101,7 @@ export function RolesPanel({
           description: draft.description,
           permissions: draft.permissions,
           rank: draft.rank,
+          data_scope: draft.data_scope,
         });
       } else {
         await api.createRole(org.id, {
@@ -88,6 +109,7 @@ export function RolesPanel({
           description: draft.description,
           permissions: draft.permissions,
           rank: draft.rank,
+          data_scope: draft.data_scope,
         });
       }
       push(t("role.saved"), "ok");
@@ -162,7 +184,27 @@ export function RolesPanel({
                   onChange={(event) => setDraft({ ...draft, rank: Number(event.target.value) })}
                 />
               </div>
+              <div className="field" style={{ flex: "1 1 220px" }}>
+                <label>{t("role.scope")}</label>
+                <select
+                  className="input"
+                  value={draft.data_scope}
+                  disabled={draft.key === "owner"}
+                  onChange={(event) => setDraft({ ...draft, data_scope: event.target.value })}
+                >
+                  {scopes.map((scope) => (
+                    <option key={scope.key} value={scope.key}>
+                      {scopeLabel(catalog, scope.key, locale)}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+            <p className="hint" style={{ margin: "6px 0 0" }}>
+              {draft.key === "owner"
+                ? t("role.ownerScopeFixed")
+                : scopeDescription(catalog, draft.data_scope, locale) || t("role.scopeHint")}
+            </p>
             <p className="hint" style={{ margin: "6px 0 12px" }}>
               {t("role.rankHint")}
             </p>
@@ -196,7 +238,8 @@ export function RolesPanel({
               <tr>
                 <th>{t("role.name")}</th>
                 <th>{t("role.permissions")}</th>
-                <th>{t("role.members")}</th>
+                <th>{t("role.scope")}</th>
+                <th>{t("role.membersCol")}</th>
                 <th />
               </tr>
             </thead>
@@ -223,6 +266,11 @@ export function RolesPanel({
                     <div className="muted mono" style={{ fontSize: 10.5, marginTop: 4 }}>
                       {t("role.count", { n: role.count })}
                     </div>
+                  </td>
+                  <td>
+                    <Pill tone={isOrgWide(role.data_scope) ? "accent" : "idle"}>
+                      {scopeLabel(catalog, role.data_scope || "all", locale)}
+                    </Pill>
                   </td>
                   <td className="muted">{role.members ?? 0}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>

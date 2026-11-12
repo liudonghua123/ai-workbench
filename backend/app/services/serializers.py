@@ -16,7 +16,20 @@ from app.models import (
     Project,
     ProjectResource,
     Skill,
+    User,
 )
+
+
+def _owner(session: Session, owner_id: str) -> tuple[str, str]:
+    """Display name and email for a project's owner (id, or legacy email/name)."""
+    if not owner_id:
+        return "", ""
+    user = session.get(User, owner_id)
+    if user is None:
+        user = session.exec(select(User).where(User.email == owner_id)).first()
+    if user is None:
+        return owner_id, ""
+    return user.name or user.email, user.email
 
 
 def serialize_project(session: Session, project: Project, *, reconcile: bool = True) -> dict[str, Any]:
@@ -38,6 +51,7 @@ def serialize_project(session: Session, project: Project, *, reconcile: bool = T
     preview_runs = [d for d in deployments if d.environment == "preview"]
     preview = preview_runs[0] if preview_runs else None
     production_runs = [d for d in deployments if d.environment == "production"]
+    owner_name, owner_email = _owner(session, project.owner_id or "")
     return {
         "id": project.id,
         "slug": project.slug,
@@ -67,6 +81,8 @@ def serialize_project(session: Session, project: Project, *, reconcile: bool = T
         },
         "git_initialized": project.git_initialized,
         "owner_id": project.owner_id or "",
+        "owner_name": owner_name,
+        "owner_email": owner_email,
         "org_id": project.org_id or "",
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,

@@ -96,13 +96,13 @@ team of five to fifty.
 
 Five builtins are seeded per organization:
 
-| Role | Rank | Permissions | Intended for |
-| --- | --- | --- | --- |
-| `owner` | 100 | `*` (35) | one or two people; only role that can delete the organization |
-| `admin` | 80 | 34 | everything except `org:delete` |
-| `developer` | 60 | 27 | build projects: code, preview, deploy, publish, query data |
-| `operator` | 40 | 19 | ship what developers built; no code, no access control |
-| `viewer` | 10 | 15 | read-only, including logs and audit |
+| Role | Rank | Permissions | Data scope | Intended for |
+| --- | --- | --- | --- | --- |
+| `owner` | 100 | `*` (35) | `all` | one or two people; only role that can delete the organization |
+| `admin` | 80 | 34 | `all` | everything except `org:delete` |
+| `developer` | 60 | 27 | `own` | build their own projects: code, preview, deploy, publish, query data |
+| `operator` | 40 | 19 | `own` | ship the projects granted to them; no code, no access control |
+| `viewer` | 10 | 15 | `own` | read-only on their own projects, including logs |
 
 Builtins can be re-scoped (except `owner`) and renamed; only a **custom** role can
 be deleted, and only while nobody holds it. `rank` is used for one thing: when an
@@ -110,6 +110,52 @@ IdP group maps onto several roles, the highest-ranked match wins.
 
 The editor is at **Access → Roles**. Every change is audited
 (`role.created`, `role.updated`, `role.deleted`).
+
+### 3.1 Data scope
+
+A permission answers *may this caller do X*; it says nothing about *which rows*.
+That second question is the **data scope**, and it lives on the role:
+
+| Scope | Reaches | Default holders |
+| --- | --- | --- |
+| `all` | every project in the organization | `owner`, `admin` |
+| `own` | projects the holder owns, plus any project a `RoleBinding` names them in | `developer`, `operator`, `viewer` |
+
+It sits on the role rather than on the member because "sees everything" is a
+property of the job, not of the person: promote someone to `admin` and their reach
+widens with the rest of their authority, demote them and it narrows again. Only
+`owner` is pinned to `all` (the API refuses to narrow it), otherwise an
+organization could hide its own projects from itself.
+
+**How it is enforced.** One predicate — `Principal.reaches(owner_id, org_id,
+project_id)` — and four call sites that cannot disagree:
+
+| Call site | Behaviour |
+| --- | --- |
+| `GET /api/v1/projects` (`visible_projects`) | filters the list: an `own` caller sees only their rows |
+| Detail routes (`api/deps.py` → `require_project`) | `404`, not `403`, so a foreign id is indistinguishable from a missing one |
+| MCP tools (`system_tools._guard`) | resolves the id/slug, then applies the same check before the permission check |
+| Agent runtime (`agent_runtime.run`) | rejects a `project_id` the caller cannot reach *before* creating a run row |
+
+Two consequences worth knowing:
+
+* **Missing permission → `403`, out of scope → `404`.** The middleware runs first,
+  so a `viewer` who tries to write a colleague's file is told "your role cannot
+  write code"; a `developer` who *can* write but is out of scope gets an
+  indistinguishable-from-missing `404`. Same refusal, different reason, and neither
+  leaks whether the row exists.
+* **Counts are data too.** `GET /system/overview` — the sidebar badges and the
+  dashboard feed — is scoped with the same predicate, and runs/events whose project
+  is out of scope are dropped. A number that says "16 projects" to someone who can
+  open one is a leak with extra steps.
+
+**Migrating an existing database.** Projects created before ownership was keyed on
+the user id may carry an email, a display name, or nothing at all. `migrate.py`
+runs three idempotent backfills on boot: organizations adopt their earliest `owner`
+membership, project owners that are emails/names are rewritten to user ids, and
+orphan projects are assigned to their organization's owner. The alternative —
+leaving them unowned — would make existing projects vanish for every `own`-scoped
+role on upgrade, which is a much worse failure than a slightly generous default.
 
 ---
 
@@ -132,9 +178,9 @@ you its owner; projects created while it is active are provisioned inside it.
 Two rules that are easy to get wrong, and are therefore enforced in code, not
 conventions:
 
-1. **Membership is the boundary for objects too.** `can_access(principal, owner_id,
-   org_id)` checks the organization first; being admin of *your* org never lets you
-   read *my* project by id.
+1. **Membership is the boundary for objects too.** `Principal.reaches(owner_id,
+   org_id, project_id)` checks the organization first; being admin of *your* org
+   never lets you read *my* project by id — and `own` narrows it further.
 2. **Every org handler re-checks the org in the URL.** The middleware answers "does
    this caller hold X in the org their session points at"; each handler additionally
    calls `_require(session, principal, org_id_from_url, permission)`. Changing a path
@@ -381,9 +427,15 @@ principal's permissions:
 _guard("project:create", create_project)   # agent calling it as a viewer → 403
 ```
 
+The same holds for the data scope: `list_projects`, `describe_workbench`'s counts
+and every tool that takes a `project_id` (or a slug) resolve the row and apply
+`Principal.reaches` first. An agent invoked by an `own`-scoped developer therefore
+sees exactly that developer's projects — and a run that names somebody else's
+project is refused before it is even recorded.
+
 Two tools exist so an agent can reason about the boundary instead of guessing:
-`describe_access` (who am I, which org, which permissions) and `check_permission`
-(would this specific action be allowed). The prompt tells the model that a `403` is
+`describe_access` (who am I, which org, which permissions, which scope) and
+`check_permission` (would this specific action be allowed). The prompt tells the model that a `403` is
 a boundary, not a bug, and that SSO secrets are unreachable through tools. The audit
 log records the refusal either way.
 

@@ -3,10 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
+from app.api.deps import load_scoped, scoped_project, visible_projects
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.errors import ForbiddenError, NotFoundError
-from app.core.security import Principal, can_access, get_principal
+from app.core.security import Principal, get_principal
 from app.models import DomainBinding, EnvVar, Project, ProjectStatus
 from app.schemas import DomainCreate, EnvVarUpsert, FileWrite, ProjectCreate
 from app.providers import domain_provider
@@ -18,11 +19,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 def _load(session: Session, project_id: str, principal: Principal):
-    project = scaffold.get_project(session, project_id)
-    if not can_access(principal, project.owner_id, project.org_id):
-        # do not leak existence across owners
-        raise NotFoundError(f"项目不存在: {project_id}")
-    return project
+    return load_scoped(session, project_id, principal)
 
 
 @router.get("")
@@ -30,9 +27,8 @@ def list_projects(
     session: Session = Depends(get_session),
     principal: Principal = Depends(get_principal),
 ):
-    projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()  # type: ignore[attr-defined]
-    visible = [p for p in projects if can_access(principal, p.owner_id, p.org_id)]
-    return [serialize_project(session, p) for p in visible]
+    projects = visible_projects(session, principal)
+    return [serialize_project(session, p) for p in projects]
 
 
 @router.post("", status_code=201)
@@ -41,6 +37,9 @@ def create_project(
     session: Session = Depends(get_session),
     principal: Principal = Depends(get_principal),
 ):
+    # the creator owns the row: that is what an "own scope" role keys off, so it
+    # is always the stable user id — never a display name that can change
+    owner_id = principal.user_id or principal.email or ""
     project = scaffold.create_project(
         session,
         CreateProjectSpec(
@@ -53,11 +52,11 @@ def create_project(
             variables=payload.variables,
             deploy=payload.deploy,
             org_id=payload.org_id or principal.org_id,
-            owner_id=principal.email or principal.user_id or principal.name,
+            owner_id=owner_id,
         ),
     )
-    if not principal.anonymous:
-        project.owner_id = principal.email or principal.user_id or principal.name
+    if not principal.anonymous and project.owner_id != owner_id:
+        project.owner_id = owner_id
         session.add(project)
         session.commit()
         session.refresh(project)
@@ -104,26 +103,26 @@ def archive_project(
 
 
 @router.get("/{project_id}/tree")
-def project_tree(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def project_tree(project: Project = Depends(scoped_project)):
     return {"root": project.repo_path, "nodes": scaffold.list_tree(project)}
 
 
 @router.get("/{project_id}/file")
-def read_project_file(project_id: str, path: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def read_project_file(path: str, project: Project = Depends(scoped_project)):
     return scaffold.read_file(project, path)
 
 
 @router.put("/{project_id}/file")
-def write_project_file(project_id: str, payload: FileWrite, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def write_project_file(payload: FileWrite, project: Project = Depends(scoped_project)):
     return scaffold.write_file(project, payload.path, payload.content)
 
 
 @router.delete("/{project_id}/file", status_code=204)
-def delete_project_file(project_id: str, path: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def delete_project_file(
+    path: str,
+    project: Project = Depends(scoped_project),
+    session: Session = Depends(get_session),
+):
     scaffold.delete_file(project, path)
     scaffold.log_event(
         session, "project.file_deleted", f"删除 {path}", project_id=project.id, path=path
@@ -134,15 +133,19 @@ def delete_project_file(project_id: str, path: str, session: Session = Depends(g
 
 
 @router.get("/{project_id}/env")
-def list_env(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def list_env(
+    project: Project = Depends(scoped_project), session: Session = Depends(get_session)
+):
     rows = session.exec(select(EnvVar).where(EnvVar.project_id == project.id)).all()
     return [serialize_env(row) for row in rows]
 
 
 @router.put("/{project_id}/env")
-def upsert_env(project_id: str, payload: EnvVarUpsert, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def upsert_env(
+    payload: EnvVarUpsert,
+    project: Project = Depends(scoped_project),
+    session: Session = Depends(get_session),
+):
     row = session.exec(
         select(EnvVar).where(EnvVar.project_id == project.id, EnvVar.key == payload.key)
     ).first()
@@ -167,15 +170,19 @@ def upsert_env(project_id: str, payload: EnvVarUpsert, session: Session = Depend
 
 
 @router.get("/{project_id}/domains")
-def list_domains(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def list_domains(
+    project: Project = Depends(scoped_project), session: Session = Depends(get_session)
+):
     rows = session.exec(select(DomainBinding).where(DomainBinding.project_id == project.id)).all()
     return [serialize_domain(row) for row in rows]
 
 
 @router.post("/{project_id}/domains", status_code=201)
-def add_domain(project_id: str, payload: DomainCreate, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def add_domain(
+    payload: DomainCreate,
+    project: Project = Depends(scoped_project),
+    session: Session = Depends(get_session),
+):
     suffix = payload.suffix or settings.domain_suffix
     fqdn = payload.subdomain if "." in payload.subdomain else f"{payload.subdomain}.{suffix}"
     target = settings.domain_base_url or f"127.0.0.1:{project.port}"
@@ -214,8 +221,7 @@ def verify_domain(project_id: str, domain_id: str, session: Session = Depends(ge
 
 
 @router.get("/{project_id}/ide")
-def ide_entry(project_id: str, session: Session = Depends(get_session)):
-    project = scaffold.get_project(session, project_id)
+def ide_entry(project: Project = Depends(scoped_project)):
     template = settings.ide_url_template
     url = ""
     if template:

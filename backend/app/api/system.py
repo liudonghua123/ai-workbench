@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import get_session
+from app.api.deps import visible_projects
 from app.core.security import Principal, get_principal
 from app.models import (
     Agent,
@@ -29,14 +30,33 @@ def health():
 
 
 @router.get("/overview")
-def overview(session: Session = Depends(get_session)):
-    projects = session.exec(select(Project)).all()
-    deployments = session.exec(select(Deployment)).all()
+def overview(
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+):
+    # The dashboard is a view of the caller's data, not of the installation: an
+    # own-scoped user must not learn the shape of everybody else's work from the
+    # sidebar badge.
+    projects = visible_projects(session, principal)
+    ids = {p.id for p in projects}
+    deployments = [
+        d for d in session.exec(select(Deployment)).all() if d.project_id in ids
+    ]
     agents = session.exec(select(Agent)).all()
     servers = session.exec(select(McpServer)).all()
     skills = session.exec(select(Skill)).all()
-    runs = session.exec(select(AgentRun).order_by(AgentRun.created_at.desc()).limit(5)).all()  # type: ignore[attr-defined]
-    events = session.exec(select(Event).order_by(Event.created_at.desc()).limit(12)).all()  # type: ignore[attr-defined]
+    # runs and events carry project ids, so they are filtered the same way: the
+    # feed must not show "deployed customer-success" to someone who cannot see it
+    runs = [
+        r
+        for r in session.exec(select(AgentRun).order_by(AgentRun.created_at.desc()).limit(20)).all()  # type: ignore[attr-defined]
+        if not r.project_id or r.project_id in ids
+    ][:5]
+    events = [
+        e
+        for e in session.exec(select(Event).order_by(Event.created_at.desc()).limit(40)).all()  # type: ignore[attr-defined]
+        if not e.project_id or e.project_id in ids
+    ][:12]
 
     running = [d for d in deployments if d.status == DeploymentStatus.RUNNING]
     failed = [d for d in deployments if d.status == DeploymentStatus.FAILED]

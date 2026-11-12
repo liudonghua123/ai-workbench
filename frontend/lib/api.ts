@@ -274,9 +274,9 @@ export const api = {
     post<{ ok: boolean; org: Organization | null; role_key: string }>("/invitations/accept", { token }),
 
   roles: (orgId: string) => request<OrgRole[]>(`/orgs/${orgId}/roles`),
-  createRole: (orgId: string, payload: { name: string; key?: string; description?: string; permissions: string[]; rank?: number }) =>
+  createRole: (orgId: string, payload: { name: string; key?: string; description?: string; permissions: string[]; rank?: number; data_scope?: string }) =>
     post<OrgRole>(`/orgs/${orgId}/roles`, payload),
-  updateRole: (orgId: string, roleId: string, payload: { name: string; description?: string; permissions: string[]; rank?: number }) =>
+  updateRole: (orgId: string, roleId: string, payload: { name: string; description?: string; permissions: string[]; rank?: number; data_scope?: string }) =>
     patch<OrgRole>(`/orgs/${orgId}/roles/${roleId}`, payload),
   removeRole: (orgId: string, roleId: string) => del(`/orgs/${orgId}/roles/${roleId}`),
   permissionCatalog: () => request<PermissionCatalog>("/permissions"),

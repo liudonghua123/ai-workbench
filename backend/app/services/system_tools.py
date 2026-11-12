@@ -47,8 +47,20 @@ def _project_dict(project: Project, session: Session) -> dict[str, Any]:
 
 def describe_workbench() -> dict[str, Any]:
     """Describe conventions, providers and current counts so an agent can plan safely."""
+    from app.core import context
+
+    principal = context.current_principal()
     with Session(engine) as session:
-        project_count = len(session.exec(select(Project)).all())
+        # the count is part of what the model reasons about, so it must be scoped
+        # like the list it will fetch next
+        project_count = len(
+            [
+                p
+                for p in session.exec(select(Project)).all()
+                if principal is None
+                or principal.reaches(owner_id=p.owner_id, org_id=p.org_id, project_id=p.id)
+            ]
+        )
     return {
         "conventions": {
             "workspace": "data/projects/<project-slug>",
@@ -108,10 +120,24 @@ def list_templates() -> list[dict[str, Any]]:
 
 
 def list_projects() -> list[dict[str, Any]]:
-    """List every project in the workbench with its resources, domains and last deploy."""
+    """List the projects the caller may see, with resources, domains and last deploy.
+
+    Scoped exactly like ``GET /projects``: an ``own`` scope only returns the rows
+    this caller owns or was granted, so an agent never enumerates a colleague's
+    work on the user's behalf.
+    """
+    from app.core import context
+
+    principal = context.current_principal()
     with Session(engine) as session:
         projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()
-        return [_project_dict(p, session) for p in projects]  # type: ignore[attr-defined]
+        visible = [
+            p
+            for p in projects
+            if principal is None
+            or principal.reaches(owner_id=p.owner_id, org_id=p.org_id, project_id=p.id)
+        ]
+        return [_project_dict(p, session) for p in visible]  # type: ignore[attr-defined]
 
 
 def get_project(project_id: str) -> dict[str, Any]:
@@ -128,11 +154,21 @@ def create_project(
     deploy: bool = False,
 ) -> dict[str, Any]:
     """Create a new application from a template, provisioning storage, database and domain."""
+    from app.core import context
+
+    # an agent creates projects *as the caller*: the row is owned by (and belongs
+    # to the org of) the human who asked, so their own scope still covers it later
+    principal = context.current_principal()
     with Session(engine) as session:
         project = scaffold.create_project(
             session,
             CreateProjectSpec(
-                name=name, template_key=template_key, description=description, deploy=deploy
+                name=name,
+                template_key=template_key,
+                description=description,
+                deploy=deploy,
+                owner_id=(principal.user_id or principal.email) if principal else "",
+                org_id=principal.org_id if principal else "",
             ),
         )
         payload = _project_dict(project, session)
@@ -644,12 +680,34 @@ def check_permission(permission: str, project_id: str = "") -> dict[str, Any]:
     principal = context.current_principal()
     if principal is None:
         return {"permission": permission, "allowed": True, "note": "无请求上下文"}
+
+    if project_id:
+        # Answer the question the caller is really asking. A role may hold
+        # ``code:write`` and still not reach this row; saying "allowed" here and
+        # failing later with a 404 would send the model chasing a phantom bug.
+        from app.core.errors import NotFoundError
+        from app.core.security import require_project
+
+        with Session(engine) as session:
+            try:
+                project_id = require_project(session, principal, project_id).id
+            except NotFoundError:
+                return {
+                    "permission": permission,
+                    "project_id": project_id,
+                    "allowed": False,
+                    "role": principal.role,
+                    "reason": "项目不存在或不在你的数据范围内（数据范围 "
+                    f"{principal.data_scope}）",
+                }
+
     allowed = principal.has(permission, project_id or None)
     return {
         "permission": permission,
         "project_id": project_id,
         "allowed": allowed,
         "role": principal.role,
+        "data_scope": principal.data_scope,
         "reason": "" if allowed else f"角色 {principal.role} 在组织内没有 {permission}",
     }
 
@@ -726,16 +784,30 @@ TOOL_PERMISSIONS: dict[str, str] = {
 
 
 def _guard(tool: str, project_id: str | None) -> None:
-    """An agent may do exactly what the human who invoked it may do."""
+    """An agent may do exactly what the human who invoked it may do.
+
+    Two gates, mirroring the REST layer: the functional permission
+    (``TOOL_PERMISSIONS``) and the data scope (:meth:`Principal.reaches`). The
+    project reference may be an id *or* a slug — the agent sees slugs in prompts
+    and will use them — so it is resolved before either check.
+    """
     from app.core import context
     from app.core.config import settings
     from app.core.errors import ForbiddenError
+    from app.core.security import require_project
 
     principal = context.current_principal()
     if principal is None:
         if settings.auth_enabled:
             raise ForbiddenError("缺少调用者身份，拒绝执行")
         return
+
+    if project_id:
+        # the agent may pass a slug; resolve it, then apply the same data-scope
+        # rule the REST layer uses (404 — never a hint that the row exists)
+        with Session(engine) as session:
+            project_id = require_project(session, principal, project_id).id
+
     needed = TOOL_PERMISSIONS.get(tool)
     if needed and not principal.has(needed, project_id):
         raise ForbiddenError(f"调用者角色 {principal.role} 缺少权限 {needed}（工具 {tool}）")

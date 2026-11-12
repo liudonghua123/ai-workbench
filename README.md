@@ -376,6 +376,18 @@ set is just the union of your org role and any project-scoped grants.
 | Middleware | Maps the method + path to a permission through a route table, so `/mcp` inherits the REST policy instead of drifting from it. Unmatched writes fail closed |
 | Handler | Re-checks the org in the URL against the principal, then the permission. Denials are audited *before* the 403 leaves |
 
+**Permissions say *what*, data scope says *which*.** Every role also carries a
+data scope: `all` reaches every project in the organization, `own` only the
+projects its holder owns or was granted. A developer and an admin can therefore
+hold the same `code:write` and still see different workspaces — the developer's
+list is their own work plus whatever was explicitly shared. One predicate
+(`Principal.reaches`) is used by the list endpoints, the detail routes (which
+answer `404`, not `403`), the MCP tool guard and the agent runtime, so "the agent
+may do what its caller may do" stays literally true. Counts are scoped as well:
+a badge is data too.
+
+![Own scope](docs/screenshots/41-scope-own.png)
+
 Sessions are opaque bearer tokens (`wbs_…`, SHA-256 at rest, 12 h sliding),
 passwords are scrypt via the stdlib. Everything below is one page —
 `/access` — with members, roles, SSO, audit and settings tabs, each hidden when

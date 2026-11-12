@@ -70,6 +70,10 @@ export interface Project {
   preview: ProjectPreview;
   git_initialized: boolean;
   owner_id: string;
+  /** display name / email of the owner, resolved by the API for the UI */
+  owner_name?: string;
+  owner_email?: string;
+  org_id?: string;
   created_at: string | null;
   updated_at: string | null;
   meta: Record<string, unknown>;
@@ -387,10 +391,19 @@ export interface PermissionGroup {
   items: PermissionDef[];
 }
 
+export interface DataScope {
+  key: string;
+  label: string;
+  label_zh?: string;
+  description: string;
+  description_zh?: string;
+}
+
 export interface PermissionCatalog {
   groups: PermissionGroup[];
   permissions: PermissionDef[];
   total: number;
+  data_scopes?: DataScope[];
 }
 
 export interface Organization {
@@ -421,6 +434,8 @@ export interface OrgRole {
   builtin: boolean;
   rank: number;
   members?: number;
+  /** "all" reaches every project in the org, "own" only what the holder owns */
+  data_scope?: string;
 }
 
 export interface OrgMember {
@@ -450,6 +465,10 @@ export interface Principal {
   auth_method: string;
   permissions: string[];
   organizations: { id: string; slug: string; name: string; role_key: string }[];
+  /** data scope of the role this session is pinned to */
+  data_scope?: string;
+  /** projects where a RoleBinding gives extra permissions */
+  projects_with_grants?: string[];
 }
 
 export interface SessionInfo {

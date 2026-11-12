@@ -618,6 +618,57 @@ MCP 侧在**工具层**再判一次（§6）：`TOOL_PERMISSIONS` 把每个工�
 grant 展开成集合，`can()` 只问"我的集合里有没有这一项"。导航栏、按钮、标签页
 的显隐与后端是同一条判定 —— **藏起来的按钮背后，接口也真的会拒。**
 
+#### 数据范围：权限管"做什么"，范围管"对谁的"
+
+权限回答了"能不能"，没回答"对哪一行"。再加一层 RBAC 也解决不了这个问题 ——
+真正想要的是"开发者只能碰自己的项目"，而项目是**数据**，不是权限。
+
+于是范围挂在角色上（`roles.data_scope`：`all` | `own`），判定收敛成一个谓词：
+
+```python
+def reaches(self, *, owner_id="", org_id="", project_id="") -> bool:
+    if org_id and self.org_id and org_id != self.org_id and not self.is_platform_admin:
+        return False                      # ① 租户：别人的组织一律不通，超级管理员也不通
+    if self.sees_all_projects():
+        return True                       # ② 范围：all 直接短路
+    if project_id and project_id in self.grants:
+        return True                       # ③ 授权：RoleBinding 点名的项目
+    return bool(owner_id) and owner_id in {self.user_id, self.email, self.name}
+```
+
+三个判断的顺序是刻意的：**租户先于范围**（A 组织的 owner 不是 B 组织的 owner），
+**范围先于归属**（`all` 不该为每一行都去查 owner），**归属兼容历史列**（早期
+`owner_id` 存的是邮箱或姓名，升级后仍要能匹配上）。
+
+四个调用点共用它，所以不会出现"列表过滤了、详情没过滤"这种最典型的越权：
+
+| 调用点 | 行为 |
+| --- | --- |
+| `visible_projects()` | 列表逐行过滤 |
+| `require_project()` | 详情/子资源，够不着就是 404 |
+| `system_tools._guard()` | MCP 工具先解析 id/slug，再判范围，最后判权限 |
+| `agent_runtime.run()` | 入参 `project_id` 够不着时，**在写 run 记录之前**就拒 |
+
+**403 与 404 的分工**：中间件先跑，缺权限是 403（"你的角色不能改代码"）；处理器
+后跑，够不着是 404（"没有这个项目"）。两种拒绝都不确认对方的行是否存在，但把
+"权限不足"和"不是你的"分开，日志和用户提示才有意义。
+
+**计数也是数据。** `/system/overview` 的徽标与信息流同样过谓词，超范围项目的
+运行记录与事件直接丢弃 —— 否则"16 个项目"对一个只能打开 1 个的人就是泄漏。
+
+**升级不能让人丢项目。** 旧库里的项目可能没有 `owner_id`、或存着邮箱/姓名。
+`migrate.py` 每次启动跑三条幂等回填：组织认领最早那个 `owner` 成员 → 邮箱/姓名
+归一成用户 id → 孤儿项目挂到组织所有者名下。回填的 WHERE 条件只匹配仍是空值的
+行，所以运维手工改过的数据不会被覆盖。
+
+**为什么不做成 SQL 层的 WHERE。** 单文件 SQLite 上逐行过滤比多一次往返更便宜，
+而且能把"判断"留在一个地方；换成 Postgres 多副本时，`visible_projects()` 就是
+唯一需要改成 `WHERE owner_id = :uid OR id IN :grants` 的函数。
+
+验证：`backend/tools/auth_smoke.py` 里 9 条断言覆盖了这些分支 —— 他人项目列表不
+可见、详情/读文件/写文件 404、被授权项目可开、`all` 范围看得到全部、开发者建完
+自己的项目后仍看不见别人的、以及概览计数按范围收敛。
+
 ### 11.2 SSO：五条流程，一条代码路径
 
 CAS / OAuth2 / OIDC / 企微 / 钉钉的握手细节完全不同，但形状一样：跳到对方、回来
@@ -695,6 +746,10 @@ inspect(engine) → 对比 COLUMNS 声明 → ALTER TABLE ... ADD COLUMN → 建
 
 规则只有一条：**只加，不改，不删**。需要重命名就新增一列 + 双写 + 后续清理，
 真正的迁移工具（Alembic）留到多副本部署时再上。
+
+唯一的例外是 `BACKFILLS`：新增列时必须给旧行一个合理默认值（`data_scope`、
+`owner_id` 都是这样）。每条 UPDATE 都写成"只匹配仍为空值的行"，因此可重复执行，
+且永远不会覆盖运维已经手工调整过的数据。
 
 ### 11.5 创建回滚
 

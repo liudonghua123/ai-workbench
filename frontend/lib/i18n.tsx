@@ -179,6 +179,10 @@ const en = {
   "proj.emptyTitle": "No matching projects",
   "proj.emptyHint": "Try another keyword or type filter, or just create a new app.",
   "proj.summary": "{n} projects · type: {type}",
+  "proj.owner": "Owner",
+  "proj.granted": "Shared with you",
+  "proj.scopeNote":
+    "Showing the projects you own plus any shared with you. An organization admin sees them all.",
 
   /* ----------------------------------------------------------- templates */
   "tpl.title": "Templates",
@@ -705,6 +709,7 @@ const en = {
   "role.subtitle": "A role is a named permission set. Nothing else.",
   "role.count": "{n} permissions",
   "role.members": "{n} members",
+  "role.membersCol": "Members",
   "role.builtin": "Built-in",
   "role.custom": "Custom",
   "role.new": "New role",
@@ -724,6 +729,9 @@ const en = {
   "role.ownerFixed": "The owner role always has every permission",
   "role.saved": "Role saved",
   "role.expand": "Show {n} permissions",
+  "role.scope": "Data scope",
+  "role.scopeHint": "Which projects the permission set applies to. Checked on every request.",
+  "role.ownerScopeFixed": "The owner role always reaches every project in the organization.",
 
   "sso.title": "Single sign-on",
   "sso.subtitle": "One connection per tenant. Users are provisioned on first login with the role you choose.",
@@ -971,6 +979,9 @@ const zh: Record<MessageKey, string> = {
   "proj.emptyTitle": "没有匹配的项目",
   "proj.emptyHint": "换个关键词或类型筛选，或者直接新建一个应用。",
   "proj.summary": "共 {n} 个项目 · 类型：{type}",
+  "proj.owner": "所有者",
+  "proj.granted": "共享给你",
+  "proj.scopeNote": "这里只显示你拥有或别人共享给你的项目；组织管理员可以看到全部。",
 
   "tpl.title": "模板",
   "tpl.desc":
@@ -1474,6 +1485,7 @@ const zh: Record<MessageKey, string> = {
   "role.subtitle": "角色就是一个有名字的权限集合，仅此而已。",
   "role.count": "{n} 项权限",
   "role.members": "{n} 名成员",
+  "role.membersCol": "成员",
   "role.builtin": "内置",
   "role.custom": "自定义",
   "role.new": "新建角色",
@@ -1492,6 +1504,9 @@ const zh: Record<MessageKey, string> = {
   "role.inUse": "仍有 {n} 名成员使用",
   "role.ownerFixed": "所有者角色始终拥有全部权限",
   "role.saved": "角色已保存",
+  "role.scope": "数据范围",
+  "role.scopeHint": "该角色能碰到哪些项目。每次请求都会重新判定。",
+  "role.ownerScopeFixed": "所有者角色永远覆盖组织内全部项目。",
   "role.expand": "展开 {n} 项权限",
 
   "sso.title": "单点登录",

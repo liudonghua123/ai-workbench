@@ -28,9 +28,21 @@ TERMINAL_STATUSES = {"running", "failed", "stopped"}
 
 def _project(session: Session, project_id: str, principal: Principal):
     project = scaffold.get_project(session, project_id)
-    if not can_access(principal, project.owner_id, project.org_id):
+    if not can_access(principal, project.owner_id, project.org_id, project.id):
         raise NotFoundError(f"项目不存在: {project_id}")
     return project
+
+
+def _deployment(session: Session, deployment_id: str, principal: Principal):
+    """A deployment is only readable through its project's data scope."""
+    row = session.get(Deployment, deployment_id)
+    if row is None:
+        raise NotFoundError("部署不存在")
+    project = scaffold.get_project(session, row.project_id)
+    if not can_access(principal, project.owner_id, project.org_id, project.id):
+        # same answer as "no such deployment": do not confirm other people's runs
+        raise NotFoundError("部署不存在")
+    return row
 
 
 # --- templates -------------------------------------------------------------
@@ -94,9 +106,7 @@ def get_deployment(
     session: Session = Depends(get_session),
     principal: Principal = Depends(get_principal),
 ):
-    row = session.get(Deployment, deployment_id)
-    if row is None:
-        raise NotFoundError("部署不存在")
+    row = _deployment(session, deployment_id, principal)
     return serialize_deployment(row, include_log=True)
 
 
@@ -105,12 +115,18 @@ def _sse(event: str, data: dict) -> str:
 
 
 @router.get("/deployments/{deployment_id}/stream")
-def stream_deployment(deployment_id: str) -> StreamingResponse:
+def stream_deployment(
+    deployment_id: str,
+    session: Session = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+) -> StreamingResponse:
     """Server-sent events: log deltas + status transitions until the run is terminal.
 
     Polling works, but a deploy that streams feels alive and saves the client from
     guessing an interval. Delta-based on log length so reconnects stay cheap.
     """
+
+    _deployment(session, deployment_id, principal)
 
     def generate() -> Iterator[str]:
         sent_lines = 0
@@ -160,10 +176,7 @@ async def stop_deployment(
     session: Session = Depends(get_session),
     principal: Principal = Depends(get_principal),
 ):
-    row = session.get(Deployment, deployment_id)
-    if row is None:
-        raise NotFoundError("部署不存在")
-    row = await deploy_service.stop_deployment(session, row)
+    row = await deploy_service.stop_deployment(session, _deployment(session, deployment_id, principal))
     return serialize_deployment(row)
 
 

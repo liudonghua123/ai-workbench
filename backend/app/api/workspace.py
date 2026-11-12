@@ -21,7 +21,8 @@ from sqlmodel import Session
 
 from app.core.db import get_session
 from app.core.errors import ValidationFailed
-from app.core.security import Principal, can_access, get_principal
+from app.api.deps import load_scoped
+from app.core.security import Principal, get_principal
 from app.schemas import GitCommitRequest, GitRefRequest, PublishRequest
 from app.services import conventions, deployments as deploy_service, gitops, scaffold
 from app.services.serializers import serialize_deployment
@@ -30,12 +31,7 @@ router = APIRouter(prefix="/projects/{project_id}", tags=["workspace"])
 
 
 def _load(session: Session, project_id: str, principal: Principal):
-    project = scaffold.get_project(session, project_id)
-    if not can_access(principal, project.owner_id, project.org_id):
-        from app.core.errors import NotFoundError
-
-        raise NotFoundError(f"项目不存在: {project_id}")
-    return project
+    return load_scoped(session, project_id, principal)
 
 
 def _root(project) -> Path:

@@ -76,6 +76,35 @@ async function signIn() {
   return token;
 }
 
+/**
+ * Sign in a different demo account and pin it to an org, returning its token.
+ * Used for the data-scope capture: "what a developer sees" is a different view of
+ * the same API, not a different app.
+ */
+async function signInAs(email, orgSlug = CREDS.org) {
+  const res = await fetch(`${API}/auth/local/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password: CREDS.password }),
+  }).catch(() => null);
+  if (!res?.ok) {
+    problems.push(`sign-in failed for ${email} (${res?.status ?? "network"})`);
+    return "";
+  }
+  const { token } = await res.json();
+  const headers = { authorization: `Bearer ${token}` };
+  const orgs = await fetch(`${API}/orgs`, { headers }).then((r) => r.json()).catch(() => []);
+  const org = orgs.find((item) => item.slug === orgSlug) ?? orgs[0];
+  if (org) {
+    await fetch(`${API}/auth/switch-org`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ org_id: org.id }),
+    });
+  }
+  return token;
+}
+
 /** fetch wrapper that always carries the session token */
 let AUTH = {};
 const apiFetch = (path, init = {}) =>
@@ -359,6 +388,19 @@ const run = async () => {
     await page.goto(`${WEB}/access`, { waitUntil: "networkidle" });
     await shot(page, "35-access-dark", "access console, dark theme");
     await ctx.close();
+  }
+
+  // -------------------------------------------------- data scope (own only)
+  {
+    // alan is a developer with data_scope=own: he sees only the project that was
+    // granted to him, and the page says so instead of listing an empty org
+    const devToken = await signInAs("alan@acme.test");
+    if (devToken) {
+      const { ctx, page } = await context(browser, { token: devToken });
+      await page.goto(`${WEB}/projects`, { waitUntil: "networkidle" });
+      await shot(page, "41-scope-own", "own scope: only your projects plus grants");
+      await ctx.close();
+    }
   }
 
   // ------------------------------------------------------------- signed out

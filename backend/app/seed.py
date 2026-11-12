@@ -106,11 +106,17 @@ def _seed_identity(session: Session) -> None:
     round trip (state → code → token → profile), which is why the SSO path can be
     verified offline; the login page labels it 演示.
     """
-    from app.models import IdentityProvider, Project
+    from app.models import IdentityProvider, Organization, Project
     from app.services import identity
 
     org = identity.default_org(session)
     identity.ensure_builtin_roles(session, org)
+    # Every other tenant gets the same treatment: builtin labels and data scopes
+    # ship with the code, so an org created by an older build is healed here
+    # rather than only when somebody happens to open the roles tab.
+    for row in session.exec(select(Organization)).all():
+        if row.id != org.id:
+            identity.ensure_builtin_roles(session, row)
 
     if not session.exec(
         select(IdentityProvider).where(IdentityProvider.key == "demo-sso")

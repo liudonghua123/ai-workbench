@@ -39,6 +39,7 @@ from app.models import (
     MemberStatus,
     Organization,
     OrgStatus,
+    Project,
     Role,
     RoleBinding,
     Session as SessionModel,
@@ -89,6 +90,8 @@ class Principal:
     is_platform_admin: bool = False
     auth_method: str = "none"  # none | session | bootstrap
     session_id: str = ""
+    # data scope of the role this session is pinned to: "all" | "own"
+    data_scope: str = "all"
 
     # -- coarse checks kept for older call sites -------------------------
     @property
@@ -100,6 +103,36 @@ class Principal:
 
     def may_destroy(self) -> bool:
         return self.has("project:delete")
+
+    def sees_all_projects(self) -> bool:
+        """True when the data scope is the whole organization."""
+        return self.anonymous or self.is_platform_admin or self.data_scope == "all"
+
+    def reaches(
+        self,
+        *,
+        owner_id: str = "",
+        org_id: str = "",
+        project_id: str = "",
+    ) -> bool:
+        """Data scope: may this caller see *this row*?
+
+        Three gates, in order:
+
+        1. **Tenant.** Another organization is out of reach even for a super
+           admin — being owner of A must not mean reading B.
+        2. **Scope.** ``all`` short-circuits; ``own`` falls through to ownership.
+        3. **Ownership or grant.** Owned rows are yours by id, by the legacy
+           email/name columns, or because a ``RoleBinding`` names you as grantee.
+        """
+        if org_id and self.org_id and org_id != self.org_id and not self.is_platform_admin:
+            return False
+        if self.sees_all_projects():
+            return True
+        if project_id and project_id in self.grants:
+            return True
+        owners = {self.user_id, self.email, self.name} - {""}
+        return bool(owner_id) and owner_id in owners
 
     # -- real checks ------------------------------------------------------
     def has(self, permission: str, project_id: str | None = None) -> bool:
@@ -133,6 +166,8 @@ class Principal:
             "org_slug": self.org_slug,
             "is_platform_admin": self.is_platform_admin,
             "auth_method": self.auth_method,
+            "data_scope": self.data_scope,
+            "sees_all_projects": self.sees_all_projects(),
             "permissions": sorted(self.permissions),
             "projects_with_grants": sorted(self.grants),
             "organizations": [
@@ -229,6 +264,20 @@ def effective_permissions(
     return perms.role_permissions(role_key)
 
 
+def effective_scope(session: Session, org_id: str, role_key: str) -> str:
+    """Data scope of one role inside one organization.
+
+    Read from the role row so the UI can change it without a deploy; falls back
+    to the builtin declaration for an org whose roles were never seeded.
+    """
+    role = session.exec(
+        select(Role).where(Role.org_id == org_id, Role.key == role_key)
+    ).first()
+    if role is not None:
+        return perms.resolve_scope(role.data_scope)
+    return perms.role_scope(role_key)
+
+
 def _project_grants(session: Session, user_id: str) -> dict[str, frozenset[str]]:
     rows = session.exec(select(RoleBinding).where(RoleBinding.user_id == user_id)).all()
     grants: dict[str, frozenset[str]] = {}
@@ -275,8 +324,10 @@ def principal_from_session(session: Session, row: SessionModel, request: Request
 
     org, membership = chosen
     permissions = effective_permissions(session, org.id, membership.role_key)
+    scope = effective_scope(session, org.id, membership.role_key)
     if user.is_platform_admin:
         permissions = perms.expand(["*"])
+        scope = "all"
 
     return Principal(
         name=user.name or user.email or user.id,
@@ -293,6 +344,7 @@ def principal_from_session(session: Session, row: SessionModel, request: Request
         is_platform_admin=user.is_platform_admin,
         auth_method="session",
         session_id=row.id,
+        data_scope=scope,
     )
 
 
@@ -301,6 +353,7 @@ def _bootstrap_principal(token: BootstrapToken, session: Session) -> Principal:
     org = session.exec(select(Organization).order_by(Organization.created_at)).first()  # type: ignore[attr-defined]
     org_id = org.id if org else ""
     org_slug = org.slug if org else ""
+    scope = effective_scope(session, org_id, token.role_key) if org else "all"
     return Principal(
         name=token.name,
         role=token.role_key,
@@ -311,6 +364,8 @@ def _bootstrap_principal(token: BootstrapToken, session: Session) -> Principal:
         if org
         else (),
         auth_method="bootstrap",
+        # an operator token is deployment plumbing: it is not "a user's own projects"
+        data_scope=scope,
     )
 
 
@@ -377,20 +432,41 @@ def is_public(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES)
 
 
-def can_access(principal: Principal, owner_id: str | None, org_id: str | None = None) -> bool:
-    """Project visibility.
+def can_access(
+    principal: Principal,
+    owner_id: str | None,
+    org_id: str | None = None,
+    project_id: str | None = None,
+) -> bool:
+    """Project visibility, kept for call sites that already hold the row.
 
-    Organization membership is the boundary: everyone inside sees the projects
-    their role can read, nobody outside sees anything (unless platform admin).
-    Rows created before organizations existed fall back to owner identity.
+    The rule itself lives in :meth:`Principal.reaches` — being owner of one
+    organization must not mean reading another, and a role scoped to ``own``
+    only reaches rows the caller owns or was granted.
     """
-    if principal.anonymous or principal.is_platform_admin:
-        return True
-    if org_id:
-        return principal.org_id == org_id
-    if not owner_id:
-        return bool(principal.org_id)
-    return owner_id in {principal.name, principal.user_id, principal.email}
+    return principal.reaches(
+        owner_id=owner_id or "", org_id=org_id or "", project_id=project_id or ""
+    )
+
+
+def require_project(session: Session, principal: Principal, project_id: str) -> Project:
+    """Resolve a project this principal may reach, or 404.
+
+    The single implementation behind three call sites that must never disagree:
+    the REST dependency (``api/deps.py``), the MCP tool guard and the agent
+    runtime's entry check. Imports ``scaffold`` lazily because that module
+    deliberately knows nothing about authentication.
+    """
+    from app.core.errors import NotFoundError
+    from app.services import scaffold
+
+    project = scaffold.get_project(session, project_id)
+    if not principal.reaches(
+        owner_id=project.owner_id, org_id=project.org_id, project_id=project.id
+    ):
+        # 404, not 403: a 403 would confirm the id exists elsewhere
+        raise NotFoundError(f"项目不存在: {project_id}")
+    return project
 
 
 def sso_enabled() -> bool:
