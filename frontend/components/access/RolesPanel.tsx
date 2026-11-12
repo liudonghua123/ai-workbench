@@ -233,77 +233,79 @@ export function RolesPanel({
         {roles.length === 0 ? (
           <Empty icon="shield" title={t("role.title")} hint={t("common.loading")} />
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("role.name")}</th>
-                <th>{t("role.permissions")}</th>
-                <th>{t("role.scope")}</th>
-                <th>{t("role.membersCol")}</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((role) => (
-                <tr key={role.key}>
-                  <td style={{ minWidth: 180 }}>
-                    <div className="row" style={{ gap: 8 }}>
-                      <Pill tone={roleTone(role.key)}>{role.key}</Pill>
-                      <b>{roleName(role, locale)}</b>
-                    </div>
-                    {roleDescription(role, locale) ? (
-                      <div className="muted" style={{ fontSize: 11.5, marginTop: 3 }}>
-                        {roleDescription(role, locale)}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td>
-                    {isWildcard(role) ? (
-                      <span className="chip chip-you">{t("role.ownerFixed")}</span>
-                    ) : (
-                      <PermissionChips catalog={catalog} grants={role.permissions} />
-                    )}
-                    <div className="muted mono" style={{ fontSize: 10.5, marginTop: 4 }}>
-                      {t("role.count", { n: role.count })}
-                    </div>
-                  </td>
-                  <td>
-                    <Pill tone={isOrgWide(role.data_scope) ? "accent" : "idle"}>
-                      {scopeLabel(catalog, role.data_scope || "all", locale)}
-                    </Pill>
-                  </td>
-                  <td className="muted">{role.members ?? 0}</td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    {manage && role.key !== "owner" ? (
-                      <>
-                        <button className="btn btn-sm btn-ghost" onClick={() => edit(role)}>
-                          {t("role.edit")}
-                        </button>
-                        {!role.builtin ? (
-                          <button
-                            className="btn btn-sm btn-ghost"
-                            disabled={busy || (role.members ?? 0) > 0}
-                            title={
-                              (role.members ?? 0) > 0
-                                ? t("role.inUse", { n: role.members ?? 0 })
-                                : t("role.delete")
-                            }
-                            onClick={() => remove(role)}
-                          >
-                            <Icon name="trash" size={13} />
-                          </button>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="muted" style={{ fontSize: 11 }}>
-                        {role.builtin ? t("role.builtin") : t("role.custom")}
-                      </span>
-                    )}
-                  </td>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t("role.name")}</th>
+                  <th>{t("role.permissions")}</th>
+                  <th>{t("role.scope")}</th>
+                  <th>{t("role.membersCol")}</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {roles.map((role) => (
+                  <tr key={role.key}>
+                    <td style={{ minWidth: 180 }}>
+                      <div className="row" style={{ gap: 8 }}>
+                        <Pill tone={roleTone(role.key)}>{role.key}</Pill>
+                        <b>{roleName(role, locale)}</b>
+                      </div>
+                      {roleDescription(role, locale) ? (
+                        <div className="muted" style={{ fontSize: 11.5, marginTop: 3 }}>
+                          {roleDescription(role, locale)}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td>
+                      {isWildcard(role) ? (
+                        <span className="chip chip-you">{t("role.ownerFixed")}</span>
+                      ) : (
+                        <PermissionChips catalog={catalog} grants={role.permissions} />
+                      )}
+                      <div className="muted mono" style={{ fontSize: 10.5, marginTop: 4 }}>
+                        {t("role.count", { n: role.count })}
+                      </div>
+                    </td>
+                    <td>
+                      <Pill tone={isOrgWide(role.data_scope) ? "accent" : "idle"}>
+                        {scopeLabel(catalog, role.data_scope || "all", locale)}
+                      </Pill>
+                    </td>
+                    <td className="muted">{role.members ?? 0}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      {manage && role.key !== "owner" ? (
+                        <>
+                          <button className="btn btn-sm btn-ghost" onClick={() => edit(role)}>
+                            {t("role.edit")}
+                          </button>
+                          {!role.builtin ? (
+                            <button
+                              className="btn btn-sm btn-ghost"
+                              disabled={busy || (role.members ?? 0) > 0}
+                              title={
+                                (role.members ?? 0) > 0
+                                  ? t("role.inUse", { n: role.members ?? 0 })
+                                  : t("role.delete")
+                              }
+                              onClick={() => remove(role)}
+                            >
+                              <Icon name="trash" size={13} />
+                            </button>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="muted" style={{ fontSize: 11 }}>
+                          {role.builtin ? t("role.builtin") : t("role.custom")}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

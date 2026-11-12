@@ -53,20 +53,18 @@ export default function ProjectsPage() {
   return (
     <main className="content">
       <div className="page-head">
-        <div>
+        <div className="page-head-main">
           <h1 className="page-title">{t("proj.title")}</h1>
           <p className="page-desc">{t("proj.desc")}</p>
           {!seesAll ? <p className="hint">{t("proj.scopeNote")}</p> : null}
         </div>
-        <div className="spacer" />
-        <div className="row" style={{ gap: 8 }}>
-          <div style={{ position: "relative" }}>
-            <span style={{ position: "absolute", left: 10, top: 9, color: "var(--ink-3)" }}>
+        <div className="row search-row" style={{ gap: 8 }}>
+          <div className="search-box">
+            <span className="search-icon">
               <Icon name="search" size={14} />
             </span>
             <input
               className="input"
-              style={{ paddingLeft: 30, width: 220 }}
               placeholder={t("proj.search")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -80,7 +78,7 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      <div className="row" style={{ gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      <div className="row filter-row" style={{ gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {FILTERS.map((item) => {
           const count =
             item.key === "all"

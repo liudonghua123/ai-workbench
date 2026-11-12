@@ -263,52 +263,54 @@ export function SettingsPanel({
             {t("sess.hint")}
           </span>
         </div>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{t("sess.device")}</th>
-              <th>{t("sess.ip")}</th>
-              <th>{t("sess.created")}</th>
-              <th>{t("sess.expires")}</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {me.sessions.map((session) => (
-              <tr key={session.id}>
-                <td>
-                  <div className="row" style={{ gap: 6 }}>
-                    <span className="truncate" style={{ maxWidth: 320 }}>
-                      {session.user_agent || "—"}
-                    </span>
-                    {session.current ? <Pill tone="ok">{t("sess.current")}</Pill> : null}
-                  </div>
-                </td>
-                <td className="mono muted">{session.ip || "—"}</td>
-                <td className="muted">{relativeTime(session.created_at, locale)}</td>
-                <td className="muted">{untilTime(session.expires_at, locale)}</td>
-                <td style={{ textAlign: "right" }}>
-                  {session.current ? null : (
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      onClick={async () => {
-                        try {
-                          await api.revokeSession(session.id);
-                          push(t("sess.revoked"), "ok");
-                          await reload();
-                        } catch (err) {
-                          push(errorMessage(err), "err");
-                        }
-                      }}
-                    >
-                      {t("sess.revoke")}
-                    </button>
-                  )}
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t("sess.device")}</th>
+                <th>{t("sess.ip")}</th>
+                <th>{t("sess.created")}</th>
+                <th>{t("sess.expires")}</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {me.sessions.map((session) => (
+                <tr key={session.id}>
+                  <td>
+                    <div className="row" style={{ gap: 6 }}>
+                      <span className="truncate" style={{ maxWidth: 320 }}>
+                        {session.user_agent || "—"}
+                      </span>
+                      {session.current ? <Pill tone="ok">{t("sess.current")}</Pill> : null}
+                    </div>
+                  </td>
+                  <td className="mono muted">{session.ip || "—"}</td>
+                  <td className="muted">{relativeTime(session.created_at, locale)}</td>
+                  <td className="muted">{untilTime(session.expires_at, locale)}</td>
+                  <td style={{ textAlign: "right" }}>
+                    {session.current ? null : (
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        onClick={async () => {
+                          try {
+                            await api.revokeSession(session.id);
+                            push(t("sess.revoked"), "ok");
+                            await reload();
+                          } catch (err) {
+                            push(errorMessage(err), "err");
+                          }
+                        }}
+                      >
+                        {t("sess.revoke")}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {can("org:delete") ? (

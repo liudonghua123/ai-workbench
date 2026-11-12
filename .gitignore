@@ -36,3 +36,6 @@ Thumbs.db
 # --- logs ---
 *.log
 npm-debug.log*
+
+# --- local QA captures (scripts/explore.mjs) ---
+.qa/

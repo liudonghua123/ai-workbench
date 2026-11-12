@@ -241,160 +241,162 @@ export function MembersPanel({
         {members.length === 0 ? (
           <Empty icon="users" title={t("mem.none")} hint={t("mem.noneHint")} />
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("mem.email")}</th>
-                <th>{t("mem.role")}</th>
-                <th>{t("mem.titleField")}</th>
-                <th>{t("mem.lastLogin")}</th>
-                <th>{t("mem.identities")}</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((member) => {
-                const owner = member.role_key === "owner";
-                const userBindings = bindings.filter((row) => row.user_id === member.id);
-                const isOpen = expanded === member.id;
-                return (
-                  <Fragment key={member.id}>
-                    <tr>
-                      <td>
-                        <div className="access-identity">
-                          <span className="access-avatar">
-                            {(member.name || member.email || "?").slice(0, 1).toUpperCase()}
-                          </span>
-                          <div>
-                            <div className="row" style={{ gap: 6 }}>
-                              <b>{member.name || member.email}</b>
-                              {member.id === currentUserId || member.email === currentEmail ? (
-                                <span className="chip chip-you">{t("mem.you")}</span>
-                              ) : null}
-                              {member.status === "suspended" ? (
-                                <Pill tone="err">{t("mem.statusSuspended")}</Pill>
-                              ) : null}
-                            </div>
-                            <span className="muted mono" style={{ fontSize: 11 }}>
-                              {member.email}
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t("mem.email")}</th>
+                  <th>{t("mem.role")}</th>
+                  <th>{t("mem.titleField")}</th>
+                  <th>{t("mem.lastLogin")}</th>
+                  <th>{t("mem.identities")}</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {members.map((member) => {
+                  const owner = member.role_key === "owner";
+                  const userBindings = bindings.filter((row) => row.user_id === member.id);
+                  const isOpen = expanded === member.id;
+                  return (
+                    <Fragment key={member.id}>
+                      <tr>
+                        <td>
+                          <div className="access-identity">
+                            <span className="access-avatar">
+                              {(member.name || member.email || "?").slice(0, 1).toUpperCase()}
                             </span>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        {manage && !owner ? (
-                          <select
-                            className="select select-sm"
-                            value={member.role_key}
-                            disabled={busy}
-                            onChange={(event) => changeRole(member, event.target.value)}
-                          >
-                            {roleOptions.map((role) => (
-                              <option key={role.key} value={role.key}>
-                                {role.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <Pill tone={roleTone(member.role_key)}>{member.role_key}</Pill>
-                        )}
-                        {userBindings.length ? (
-                          <span
-                            className="chip chip-more"
-                            style={{ marginLeft: 6 }}
-                            title={userBindings
-                              .map((row) => {
-                                const project = projects.find((item) => item.id === row.scope_id);
-                                return `${project?.name ?? row.scope_id}: ${row.role_key || row.permissions.join(", ")}`;
-                              })
-                              .join("\n")}
-                          >
-                            +{userBindings.length}
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="muted">{member.title || "—"}</td>
-                      <td className="muted">
-                        {member.last_login_at
-                          ? relativeTime(member.last_login_at, locale)
-                          : t("mem.never")}
-                      </td>
-                      <td>
-                        <button className="linkbtn" onClick={() => showIdentities(member)}>
-                          {member.has_password ? t("mem.noIdentity") : "SSO"}
-                          <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />
-                        </button>
-                      </td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        {manage && !owner ? (
-                          <div className="row" style={{ justifyContent: "flex-end", gap: 2 }}>
-                            <button
-                              className="icon-btn"
-                              title={t("mem.resetPassword")}
-                              disabled={busy}
-                              onClick={() => resetPassword(member)}
-                            >
-                              <Icon name="key" size={13} />
-                            </button>
-                            <button
-                              className="icon-btn"
-                              title={
-                                member.status === "suspended" ? t("mem.activate") : t("mem.suspend")
-                              }
-                              disabled={busy}
-                              onClick={() =>
-                                changeStatus(
-                                  member,
-                                  member.status === "suspended" ? "active" : "suspended",
-                                )
-                              }
-                            >
-                              <Icon
-                                name={member.status === "suspended" ? "check" : "lock"}
-                                size={13}
-                              />
-                            </button>
-                            <button
-                              className="icon-btn"
-                              title={t("mem.remove")}
-                              disabled={busy}
-                              onClick={() => remove(member)}
-                            >
-                              <Icon name="trash" size={13} />
-                            </button>
-                          </div>
-                        ) : owner ? (
-                          <span className="muted" style={{ fontSize: 11 }} title={t("mem.ownerLocked")}>
-                            <Icon name="lock" size={12} />
-                          </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                    {isOpen ? (
-                      <tr className="access-subrow">
-                        <td colSpan={6}>
-                          <div className="access-identities">
-                            {(identities[member.id] ?? []).length === 0 ? (
-                              <span className="muted">
-                                {member.has_password ? t("mem.noIdentity") : t("common.loading")}
+                            <div>
+                              <div className="row" style={{ gap: 6 }}>
+                                <b>{member.name || member.email}</b>
+                                {member.id === currentUserId || member.email === currentEmail ? (
+                                  <span className="chip chip-you">{t("mem.you")}</span>
+                                ) : null}
+                                {member.status === "suspended" ? (
+                                  <Pill tone="err">{t("mem.statusSuspended")}</Pill>
+                                ) : null}
+                              </div>
+                              <span className="muted mono" style={{ fontSize: 11 }}>
+                                {member.email}
                               </span>
-                            ) : (
-                              identities[member.id].map((identity) => (
-                                <span key={identity.id} className="chip">
-                                  <Icon name="key" size={11} /> {identity.kind} ·{" "}
-                                  <span className="mono">{identity.subject}</span>
-                                </span>
-                              ))
-                            )}
+                            </div>
                           </div>
                         </td>
+                        <td>
+                          {manage && !owner ? (
+                            <select
+                              className="select select-sm"
+                              value={member.role_key}
+                              disabled={busy}
+                              onChange={(event) => changeRole(member, event.target.value)}
+                            >
+                              {roleOptions.map((role) => (
+                                <option key={role.key} value={role.key}>
+                                  {role.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <Pill tone={roleTone(member.role_key)}>{member.role_key}</Pill>
+                          )}
+                          {userBindings.length ? (
+                            <span
+                              className="chip chip-more"
+                              style={{ marginLeft: 6 }}
+                              title={userBindings
+                                .map((row) => {
+                                  const project = projects.find((item) => item.id === row.scope_id);
+                                  return `${project?.name ?? row.scope_id}: ${row.role_key || row.permissions.join(", ")}`;
+                                })
+                                .join("\n")}
+                            >
+                              +{userBindings.length}
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="muted">{member.title || "—"}</td>
+                        <td className="muted">
+                          {member.last_login_at
+                            ? relativeTime(member.last_login_at, locale)
+                            : t("mem.never")}
+                        </td>
+                        <td>
+                          <button className="linkbtn" onClick={() => showIdentities(member)}>
+                            {member.has_password ? t("mem.noIdentity") : "SSO"}
+                            <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />
+                          </button>
+                        </td>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          {manage && !owner ? (
+                            <div className="row" style={{ justifyContent: "flex-end", gap: 2 }}>
+                              <button
+                                className="icon-btn"
+                                title={t("mem.resetPassword")}
+                                disabled={busy}
+                                onClick={() => resetPassword(member)}
+                              >
+                                <Icon name="key" size={13} />
+                              </button>
+                              <button
+                                className="icon-btn"
+                                title={
+                                  member.status === "suspended" ? t("mem.activate") : t("mem.suspend")
+                                }
+                                disabled={busy}
+                                onClick={() =>
+                                  changeStatus(
+                                    member,
+                                    member.status === "suspended" ? "active" : "suspended",
+                                  )
+                                }
+                              >
+                                <Icon
+                                  name={member.status === "suspended" ? "check" : "lock"}
+                                  size={13}
+                                />
+                              </button>
+                              <button
+                                className="icon-btn"
+                                title={t("mem.remove")}
+                                disabled={busy}
+                                onClick={() => remove(member)}
+                              >
+                                <Icon name="trash" size={13} />
+                              </button>
+                            </div>
+                          ) : owner ? (
+                            <span className="muted" style={{ fontSize: 11 }} title={t("mem.ownerLocked")}>
+                              <Icon name="lock" size={12} />
+                            </span>
+                          ) : null}
+                        </td>
                       </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                      {isOpen ? (
+                        <tr className="access-subrow">
+                          <td colSpan={6}>
+                            <div className="access-identities">
+                              {(identities[member.id] ?? []).length === 0 ? (
+                                <span className="muted">
+                                  {member.has_password ? t("mem.noIdentity") : t("common.loading")}
+                                </span>
+                              ) : (
+                                identities[member.id].map((identity) => (
+                                  <span key={identity.id} className="chip">
+                                    <Icon name="key" size={11} /> {identity.kind} ·{" "}
+                                    <span className="mono">{identity.subject}</span>
+                                  </span>
+                                ))
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -405,38 +407,40 @@ export function MembersPanel({
             <span className="card-title">{t("mem.pendingInvites")}</span>
             <span className="count-badge">{pending.length}</span>
           </div>
-          <table className="table">
-            <tbody>
-              {pending.map((row) => (
-                <tr key={row.id}>
-                  <td className="mono">{row.email}</td>
-                  <td>
-                    <Pill tone={roleTone(row.role_key)}>{row.role_key}</Pill>
-                  </td>
-                  <td className="muted">
-                    {t("mem.invitedBy", { name: row.invited_by || "—" })} ·{" "}
-                    {relativeTime(row.created_at, locale)}
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    {manage ? (
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        disabled={busy}
-                        onClick={() =>
-                          run(async () => {
-                            await api.revokeInvitation(org.id, row.id);
-                            await reload();
-                          })
-                        }
-                      >
-                        {t("common.delete")}
-                      </button>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-wrap">
+            <table className="table">
+              <tbody>
+                {pending.map((row) => (
+                  <tr key={row.id}>
+                    <td className="mono">{row.email}</td>
+                    <td>
+                      <Pill tone={roleTone(row.role_key)}>{row.role_key}</Pill>
+                    </td>
+                    <td className="muted">
+                      {t("mem.invitedBy", { name: row.invited_by || "—" })} ·{" "}
+                      {relativeTime(row.created_at, locale)}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      {manage ? (
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          disabled={busy}
+                          onClick={() =>
+                            run(async () => {
+                              await api.revokeInvitation(org.id, row.id);
+                              await reload();
+                            })
+                          }
+                        >
+                          {t("common.delete")}
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : null}
 
@@ -564,57 +568,59 @@ function BindingsCard({ org, members, roles, bindings, projects, can, reload }: 
       {bindings.length === 0 ? (
         <Empty icon="lock" title={t("bind.none")} hint={t("bind.noneHint")} />
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{t("bind.user")}</th>
-              <th>{t("bind.scope")}</th>
-              <th>{t("bind.role")}</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {bindings.map((row) => (
-              <tr key={row.id}>
-                <td>{userOf(row.user_id)}</td>
-                <td>
-                  <span className="chip">
-                    <Icon name="layers" size={11} />
-                    {nameOf(row.scope_id)}
-                  </span>
-                </td>
-                <td>
-                  <Pill tone={roleTone(row.role_key)}>{row.role_key || "—"}</Pill>
-                  {row.permissions.length ? (
-                    <span className={cx("muted", "mono")} style={{ marginLeft: 6, fontSize: 11 }}>
-                      {row.permissions.join(", ")}
-                    </span>
-                  ) : null}
-                </td>
-                <td style={{ textAlign: "right" }}>
-                  {manage ? (
-                    <button
-                      className="icon-btn"
-                      title={t("bind.remove")}
-                      onClick={async () => {
-                        if (!window.confirm(t("bind.removeConfirm", { name: userOf(row.user_id) })))
-                          return;
-                        try {
-                          await api.removeBinding(org.id, row.id);
-                          await reload();
-                        } catch (err) {
-                          push(errorMessage(err), "err");
-                        }
-                      }}
-                    >
-                      <Icon name="trash" size={13} />
-                    </button>
-                  ) : null}
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t("bind.user")}</th>
+                <th>{t("bind.scope")}</th>
+                <th>{t("bind.role")}</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {bindings.map((row) => (
+                <tr key={row.id}>
+                  <td>{userOf(row.user_id)}</td>
+                  <td>
+                    <span className="chip">
+                      <Icon name="layers" size={11} />
+                      {nameOf(row.scope_id)}
+                    </span>
+                  </td>
+                  <td>
+                    <Pill tone={roleTone(row.role_key)}>{row.role_key || "—"}</Pill>
+                    {row.permissions.length ? (
+                      <span className={cx("muted", "mono")} style={{ marginLeft: 6, fontSize: 11 }}>
+                        {row.permissions.join(", ")}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {manage ? (
+                      <button
+                        className="icon-btn"
+                        title={t("bind.remove")}
+                        onClick={async () => {
+                          if (!window.confirm(t("bind.removeConfirm", { name: userOf(row.user_id) })))
+                            return;
+                          try {
+                            await api.removeBinding(org.id, row.id);
+                            await reload();
+                          } catch (err) {
+                            push(errorMessage(err), "err");
+                          }
+                        }}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

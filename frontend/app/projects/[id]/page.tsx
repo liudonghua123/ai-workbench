@@ -161,7 +161,7 @@ export default function ProjectDetailPage() {
         <span className="project-glyph" style={{ width: 40, height: 40, borderRadius: 11 }}>
           <Icon name={TYPE_ICON[project.type] ?? "layers"} size={19} />
         </span>
-        <div style={{ minWidth: 0 }}>
+        <div className="page-head-main">
           <div className="row" style={{ gap: 8 }}>
             <h1 className="page-title" style={{ fontSize: 22 }}>
               {project.name}

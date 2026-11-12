@@ -819,6 +819,41 @@ PrefsProvider ──▶ Shell  ──▶ data-nav="rail" | "top"
 `themeScript` 在 hydration 前执行，避免首屏闪烁。语言同理有轻微的首屏
 翻转（默认英文），这是"默认 en + localStorage"的固有代价，可接受。
 
+### 12.3 响应式：断点属于 CSS，不属于组件
+
+导航位置是"用户偏好"，窄屏形态是"视口事实"，两者不能混：`data-nav` 由用户
+决定，`@media (max-width: 640px)` 由 CSS 决定，后者始终覆盖前者。
+
+三个断点，职责单一：
+
+| 断点 | 变化 |
+| --- | --- |
+| ≤1100px | 四列 KPI 降两列，`/agents` 的列表+对话并排改上下 |
+| ≤860px | 侧栏收成 68px 图标条；双栏 grid 全部塌单列；表格获得横向滚动与可见滚动条 |
+| ≤640px | 侧栏变底部标签栏；面包屑去掉项目 id；顶栏只留必要控件；点按目标放大到 34px；toast 上移避让底栏 |
+
+**分栏比例不能写在内联样式里。** 这是本轮唯一的结构性修复：页面上原本是
+
+```tsx
+<div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.35fr) minmax(0,1fr)" }}>
+```
+
+内联样式媒体查询够不着，于是窄屏上两列仍是 1.35fr/1fr，文字被压成一字一行。
+现在比例通过自定义属性传递，断点统一在 `globals.css` 里拥有：
+
+```tsx
+<div className="split" style={{ "--split": "minmax(0,1.35fr) minmax(0,1fr)" } as CSSProperties}>
+```
+
+```css
+.split { grid-template-columns: var(--split, minmax(0,1.5fr) minmax(0,1fr)); }
+@media (max-width: 1000px) { .split { grid-template-columns: minmax(0, 1fr); } }
+```
+
+同理，`.card > .table` 统一包一层 `.table-wrap`：**让表格在自己卡片里滚动，
+而不是把整页撑宽**。`scripts/explore.mjs` 会遍历所有页面与标签页，把
+`scrollWidth > clientWidth` 的页面连同越界元素一起报出来——响应式改动靠它守。
+
 ---
 
 ## 13. 扩展点总览
@@ -903,6 +938,7 @@ frontend/
 docs/architecture.md     本文档
 docs/access.md           RBAC / 组织 / SSO 运维手册
 docs/conventions/        三类项目规范 + 约定大于配置的设计说明
-scripts/shoot.mjs        端到端走查 + 截图脚本
+scripts/shoot.mjs        端到端走查 + 截图脚本（含 390×844 手机视口）
+scripts/explore.mjs      逐页扫描横向溢出与点按目标（--mobile 切手机视口）
 data/                    运行时生成（已 gitignore）
 ```

@@ -9,6 +9,7 @@ import { Preferences } from "./Preferences";
 import { SessionMenu } from "./SessionMenu";
 import { TopNav } from "./NavLinks";
 import { api, API_BASE } from "@/lib/api";
+import { cx } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { NAV } from "@/lib/nav";
 import { usePrefs } from "@/lib/prefs";
@@ -45,9 +46,14 @@ export function Topbar() {
         <SessionMenu />
         <Preferences />
         {mayCreate ? (
-          <button className="btn btn-primary" onClick={() => setOpen(true)}>
+          <button
+            className="btn btn-primary"
+            onClick={() => setOpen(true)}
+            title={t("topbar.newApp")}
+            aria-label={t("topbar.newApp")}
+          >
             <Icon name="plus" size={14} />
-            {t("topbar.newApp")}
+            <span className="btn-label">{t("topbar.newApp")}</span>
           </button>
         ) : null}
       </div>
@@ -66,14 +72,17 @@ function Crumbs() {
 
   return (
     <nav className="crumbs" aria-label="breadcrumb">
-      <Link href="/" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <Link href="/" className="crumb-home">
         <Icon name="dashboard" size={14} />
         {t("topbar.home")}
       </Link>
       {root ? (
         <>
           <span className="sep">/</span>
-          <Link href={`/${root}`} className={segments.length === 1 ? undefined : "muted"}>
+          <Link
+            href={`/${root}`}
+            className={cx("crumb-mid", segments.length === 1 ? undefined : "muted")}
+          >
             {entry ? t(entry.labelKey) : root}
           </Link>
         </>
@@ -81,7 +90,7 @@ function Crumbs() {
       {segments.length > 1 ? (
         <>
           <span className="sep">/</span>
-          <b className="truncate" style={{ maxWidth: 260 }}>
+          <b className="truncate crumb-leaf" style={{ maxWidth: 260 }}>
             {segments[1]}
           </b>
         </>
@@ -111,16 +120,10 @@ function ApiStatus() {
   }, []);
 
   return (
-    <span
-      className="mono muted"
-      title={API_BASE}
-      style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}
-    >
+    <span className="topbar-api mono muted" title={API_BASE}>
       <i
+        className="topbar-dot"
         style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
           background: online === null ? "var(--ink-4)" : online ? "var(--ok)" : "var(--err)",
           boxShadow: online ? "0 0 0 3px var(--ok-soft)" : "none",
         }}

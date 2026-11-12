@@ -222,6 +222,21 @@ The same UI in Chinese:
 
 ![Chinese dashboard](docs/screenshots/22-dashboard-zh.png)
 
+### On a phone
+
+Below 640px the sidebar turns into a bottom tab bar and every two-column region
+stacks into one. Wide tables scroll inside their card instead of widening the
+page, and toasts move up so the bar never covers them.
+
+![Phone: projects](docs/screenshots/42-phone-projects.png)
+
+![Phone: project detail](docs/screenshots/43-phone-detail.png)
+
+Column ratios travel as a CSS custom property (`.split` plus `--split`) instead
+of an inline `gridTemplateColumns`. An inline grid cannot be reached by a media
+query — which is exactly how the two-column pages used to end up one character
+per line on a narrow screen.
+
 ---
 
 ## Internationalisation

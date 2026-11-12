@@ -162,10 +162,15 @@ function watch(page) {
 }
 
 /** Fresh context with the given preferences already in localStorage. */
-async function context(browser, { locale = "en", nav = "rail", theme = "light", token = "" } = {}) {
+async function context(
+  browser,
+  { locale = "en", nav = "rail", theme = "light", token = "", phone = false } = {},
+) {
   const ctx = await browser.newContext({
-    viewport: { width: 1440, height: 900 },
+    viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 },
     deviceScaleFactor: 2,
+    isMobile: phone,
+    hasTouch: phone,
     colorScheme: theme === "dark" ? "dark" : "light",
   });
   await ctx.addInitScript(
@@ -401,6 +406,24 @@ const run = async () => {
       await shot(page, "41-scope-own", "own scope: only your projects plus grants");
       await ctx.close();
     }
+  }
+
+  // ---------------------------------------------------------------- phone
+  {
+    // the same app at 390×844: the rail becomes a bottom bar and every two-column
+    // region stacks, so a capture here is the cheapest responsive regression test
+    const { ctx, page } = await context(browser, { locale: "zh", phone: true, token });
+
+    await page.goto(`${WEB}/projects`, { waitUntil: "networkidle" });
+    await shot(page, "42-phone-projects", "phone: projects + bottom bar");
+
+    await page.goto(`${WEB}/projects/${project.id}`, { waitUntil: "networkidle" });
+    await shot(page, "43-phone-detail", "phone: project detail");
+
+    await page.goto(`${WEB}/access`, { waitUntil: "networkidle" });
+    await shot(page, "44-phone-access", "phone: access console");
+
+    await ctx.close();
   }
 
   // ------------------------------------------------------------- signed out

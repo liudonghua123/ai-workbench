@@ -257,28 +257,30 @@ export default function SettingsPage() {
             <span className="card-title">{t("sys.providers")}</span>
           </div>
           <div className="card-body" style={{ paddingTop: 4 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("sys.capability")}</th>
-                  <th>{t("sys.active")}</th>
-                  <th>{t("sys.registered")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(providers?.active ?? settings.providers).map(([kind, active]) => (
-                  <tr key={kind}>
-                    <td className="mono">{kind}</td>
-                    <td>
-                      <span className="tag">{String(active)}</span>
-                    </td>
-                    <td className="muted mono" style={{ fontSize: 11 }}>
-                      {(providers?.available?.[kind] ?? []).join(", ") || "—"}
-                    </td>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t("sys.capability")}</th>
+                    <th>{t("sys.active")}</th>
+                    <th>{t("sys.registered")}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {Object.entries(providers?.active ?? settings.providers).map(([kind, active]) => (
+                    <tr key={kind}>
+                      <td className="mono">{kind}</td>
+                      <td>
+                        <span className="tag">{String(active)}</span>
+                      </td>
+                      <td className="muted mono" style={{ fontSize: 11 }}>
+                        {(providers?.available?.[kind] ?? []).join(", ") || "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       </div>

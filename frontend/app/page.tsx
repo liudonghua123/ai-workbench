@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
@@ -172,12 +172,8 @@ export default function DashboardPage() {
       </section>
 
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0,1.55fr) minmax(0,1fr)",
-          gap: 16,
-          alignItems: "start",
-        }}
+        className="split"
+        style={{ "--split": "minmax(0,1.55fr) minmax(0,1fr)" } as CSSProperties}
       >
         <section>
           <div className="row-between" style={{ marginBottom: 10 }}>

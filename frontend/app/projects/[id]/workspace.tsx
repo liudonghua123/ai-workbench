@@ -1099,18 +1099,20 @@ export function ConventionsTab({ project }: { project: Project }) {
             <Icon name="folder" size={14} />
             <span className="card-title">{t("cv.layout")}</span>
           </div>
-          <table className="table">
-            <tbody>
-              {report.spec.layout.map((item) => (
-                <tr key={item.path}>
-                  <td className="mono" style={{ whiteSpace: "nowrap" }}>
-                    {item.path}
-                  </td>
-                  <td className="muted">{item.meaning}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-wrap">
+            <table className="table">
+              <tbody>
+                {report.spec.layout.map((item) => (
+                  <tr key={item.path}>
+                    <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                      {item.path}
+                    </td>
+                    <td className="muted">{item.meaning}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="card">

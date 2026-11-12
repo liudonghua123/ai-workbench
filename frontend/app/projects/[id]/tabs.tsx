@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "@/components/Icon";
 import { LogViewer } from "@/components/LogViewer";
 import { CopyButton, Empty, KV, LoadingRows, Pill, StatusPill, useToast } from "@/components/ui";
@@ -56,12 +56,8 @@ export function OverviewTab({
 
   return (
     <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(0,1.35fr) minmax(0,1fr)",
-        gap: 16,
-        alignItems: "start",
-      }}
+      className="split"
+      style={{ "--split": "minmax(0,1.35fr) minmax(0,1fr)" } as CSSProperties}
     >
       <div className="stack" style={{ gap: 16 }}>
         <section className="card">
@@ -104,55 +100,57 @@ export function OverviewTab({
           {project.resources.length === 0 ? (
             <Empty icon="cloud" title={t("ov.noResources")} hint={t("ov.noResourcesHint")} />
           ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("ov.kind")}</th>
-                  <th>{t("ov.name")}</th>
-                  <th>Provider</th>
-                  <th>{t("ov.dsn")}</th>
-                  <th>{t("ov.status")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {project.resources.map((resource) => {
-                  const labelKey = RESOURCE_LABEL[resource.kind];
-                  return (
-                    <tr key={resource.id}>
-                      <td>
-                        <span className="row" style={{ gap: 6, whiteSpace: "nowrap" }}>
-                          <Icon
-                            name={resource.kind === "storage" ? "cloud" : "database"}
-                            size={13}
-                          />
-                          {labelKey ? t(labelKey) : resource.kind}
-                        </span>
-                      </td>
-                      <td className="mono" style={{ whiteSpace: "nowrap" }}>
-                        {resource.name}
-                      </td>
-                      <td>
-                        <span className="tag">{resource.provider}</span>
-                      </td>
-                      <td
-                        className="mono truncate"
-                        style={{ maxWidth: 260 }}
-                        title={resource.endpoint}
-                      >
-                        {String(
-                          (resource.config?.dsn as string) ??
-                            (resource.config?.path as string) ??
-                            resource.endpoint,
-                        )}
-                      </td>
-                      <td>
-                        <Pill tone="ok">{resource.status}</Pill>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t("ov.kind")}</th>
+                    <th>{t("ov.name")}</th>
+                    <th>Provider</th>
+                    <th>{t("ov.dsn")}</th>
+                    <th>{t("ov.status")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {project.resources.map((resource) => {
+                    const labelKey = RESOURCE_LABEL[resource.kind];
+                    return (
+                      <tr key={resource.id}>
+                        <td>
+                          <span className="row" style={{ gap: 6, whiteSpace: "nowrap" }}>
+                            <Icon
+                              name={resource.kind === "storage" ? "cloud" : "database"}
+                              size={13}
+                            />
+                            {labelKey ? t(labelKey) : resource.kind}
+                          </span>
+                        </td>
+                        <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                          {resource.name}
+                        </td>
+                        <td>
+                          <span className="tag">{resource.provider}</span>
+                        </td>
+                        <td
+                          className="mono truncate"
+                          style={{ maxWidth: 260 }}
+                          title={resource.endpoint}
+                        >
+                          {String(
+                            (resource.config?.dsn as string) ??
+                              (resource.config?.path as string) ??
+                              resource.endpoint,
+                          )}
+                        </td>
+                        <td>
+                          <Pill tone="ok">{resource.status}</Pill>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
 
@@ -393,14 +391,38 @@ export function DeployTab({
     }
   };
 
+  // Nothing has shipped yet: one clear empty state, instead of a detail card that
+  // renders a lone dash beside a blank log and reads like a failed load.
+  if (deployments.length === 0) {
+    return (
+      <section className="card">
+        <div className="card-head">
+          <Icon name="rocket" size={14} />
+          <span className="card-title">{t("dep.history")}</span>
+          <div className="spacer" />
+          <button className="btn btn-sm btn-primary" onClick={onDeploy} disabled={busy}>
+            <Icon name="plus" size={12} /> {t("detail.deploy")}
+          </button>
+        </div>
+        <Empty icon="rocket" title={t("dep.empty")} hint={t("dep.emptyHint")} />
+        <div className="card-pad" style={{ borderTop: "1px solid var(--line)" }}>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <span className="muted" style={{ fontSize: 11.5 }}>
+              {t("dep.appUrl")}
+            </span>
+            <a className="link mono" href={project.url} target="_blank" rel="noreferrer">
+              {project.url}
+            </a>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "340px minmax(0,1fr)",
-        gap: 16,
-        alignItems: "start",
-      }}
+      className="split"
+      style={{ "--split": "340px minmax(0,1fr)" } as CSSProperties}
     >
       <section className="card">
         <div className="card-head">
@@ -551,12 +573,8 @@ export function DataTab({ project }: { project: Project }) {
 
   return (
     <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)",
-        gap: 16,
-        alignItems: "start",
-      }}
+      className="split"
+      style={{ "--split": "minmax(0,1.4fr) minmax(0,1fr)" } as CSSProperties}
     >
       <section className="card">
         <div className="card-head">
@@ -608,26 +626,28 @@ export function DataTab({ project }: { project: Project }) {
             <Empty icon="database" title={t("data.noRows")} />
           ) : (
             <div style={{ overflowX: "auto", border: "1px solid var(--line)", borderRadius: 10 }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    {columns.map((column) => (
-                      <th key={column}>{column}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => (
-                    <tr key={index}>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
                       {columns.map((column) => (
-                        <td key={column} className="mono">
-                          {String(row[column] ?? "null")}
-                        </td>
+                        <th key={column}>{column}</th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, index) => (
+                      <tr key={index}>
+                        {columns.map((column) => (
+                          <td key={column} className="mono">
+                            {String(row[column] ?? "null")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -718,12 +738,8 @@ export function SettingsTab({
 
   return (
     <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr)",
-        gap: 16,
-        alignItems: "start",
-      }}
+      className="split"
+      style={{ "--split": "minmax(0,1.3fr) minmax(0,1fr)" } as CSSProperties}
     >
       <section className="card">
         <div className="card-head">
@@ -734,32 +750,34 @@ export function SettingsTab({
             {t("set.envHint")}
           </span>
         </div>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{t("set.key")}</th>
-              <th>{t("set.value")}</th>
-              <th style={{ width: 70 }}>{t("set.kind")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {env.map((item) => (
-              <tr key={item.id}>
-                <td className="mono">{item.key}</td>
-                <td className="mono truncate" style={{ maxWidth: 300 }} title={item.value}>
-                  {item.value}
-                </td>
-                <td>
-                  {item.is_secret ? (
-                    <Pill tone="warn">{t("set.secret")}</Pill>
-                  ) : (
-                    <Pill tone="idle">{t("set.plain")}</Pill>
-                  )}
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t("set.key")}</th>
+                <th>{t("set.value")}</th>
+                <th style={{ width: 70 }}>{t("set.kind")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {env.map((item) => (
+                <tr key={item.id}>
+                  <td className="mono">{item.key}</td>
+                  <td className="mono truncate" style={{ maxWidth: 300 }} title={item.value}>
+                    {item.value}
+                  </td>
+                  <td>
+                    {item.is_secret ? (
+                      <Pill tone="warn">{t("set.secret")}</Pill>
+                    ) : (
+                      <Pill tone="idle">{t("set.plain")}</Pill>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div className="card-body" style={{ borderTop: "1px solid var(--line)" }}>
           <div className="grid grid-2" style={{ gap: 10 }}>
             <div className="field">

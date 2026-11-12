@@ -190,6 +190,20 @@ MCP 服务、Skills、Agents 都是数据行，用 id 相互关联 —— 所以
 同一套界面切到英文：
 
 ![英文界面](docs/screenshots/01-dashboard.png)
+
+### 手机上
+
+窄于 640px 时侧边栏收成底部标签栏，所有双栏区域塌成单栏。宽表格在卡片内横向滚动，
+而不是把整页撑宽；提示条会上移，不会被底栏盖住。
+
+![手机：项目列表](docs/screenshots/42-phone-projects.png)
+
+![手机：项目详情](docs/screenshots/43-phone-detail.png)
+
+分栏比例通过 CSS 变量传递（`.split` + `--split`），而不是内联
+`gridTemplateColumns`——内联 grid 媒体查询够不着，这正是之前双栏页面在窄屏上
+被压成一字一行竖排的原因。
+
 ---
 
 ## 国际化
