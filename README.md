@@ -365,8 +365,8 @@ time and the top-right menu switches between them. Nothing crosses that line —
 an admin of org A editing a path segment to reach org B gets a `404`, so the
 existence of B isn't even confirmed.
 
-**A role is a named set of permissions from a 35-key catalog** (`project:deploy`,
-`sso:manage`, `member:invite`, …). Five ship with every org — `owner` `admin`
+**A role is a named set of permissions from a 35-key catalog** (`deploy:publish`,
+`sso:manage`, `member:manage`, …). Five ship with every org — `owner` `admin`
 `developer` `operator` `viewer` — and you can add your own in the UI with a
 checkbox grid. There is no inheritance to reason about; the effective permission
 set is just the union of your org role and any project-scoped grants.
@@ -386,7 +386,7 @@ you lack the permission for it:
 Roles are edited inline, built-ins included (except `owner`, which must stay
 total so an org can never lock itself out):
 
-![Role editor](docs/screenshots/27-access-role-editor.png)
+![Role editor](docs/screenshots/28-access-role-editor.png)
 
 ### Single sign-on
 

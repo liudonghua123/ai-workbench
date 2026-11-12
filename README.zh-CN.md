@@ -315,7 +315,7 @@ WB_AUTH_ALLOW_SIGNUP=true          # 新组织的第一个注册者成为 owner
 
 **组织就是租户边界。** 用户通过一条只带一个角色的成员关系属于某个组织；会话同一时刻只钉在一个组织上，右上角菜单负责切换。这条线不穿透 —— 把路径里的 id 改成别的组织，A 组织的管理员拿到的是 `404`，连 B 是否存在都不确认。
 
-**角色就是权限目录里的一组名字**（共 35 项：`project:deploy`、`sso:manage`、`member:invite` ……）。每个组织自带五个 —— `owner` `admin` `developer` `operator` `viewer` —— 也可以在界面上用勾选表自己加。没有继承需要推演：有效权限就是你组织角色与项目级授权的并集。
+**角色就是权限目录里的一组名字**（共 35 项：`deploy:publish`、`sso:manage`、`member:manage` ……）。每个组织自带五个 —— `owner` `admin` `developer` `operator` `viewer` —— 也可以在界面上用勾选表自己加。没有继承需要推演：有效权限就是你组织角色与项目级授权的并集。
 
 | 层 | 决定什么 |
 | --- | --- |
