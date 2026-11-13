@@ -9,9 +9,10 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -145,7 +146,11 @@ class Settings(BaseSettings):
     auth_state_ttl: int = 10
 
     # --- misc ----------------------------------------------------------
-    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # NoDecode: pydantic-settings JSON-decodes complex env values and a
+    # comma list is not JSON — the source raised before our validator ran.
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
     # In debug the console is allowed on any loopback port, because that is the
     # whole point of a configurable dev port: `npm run dev -- --port 3101` must
     # not fail CORS. Disabled with WB_DEBUG=false, where only cors_origins count.
