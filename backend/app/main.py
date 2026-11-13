@@ -125,7 +125,8 @@ async def principal_middleware(request: Request, call_next):
                 principal = security.ANONYMOUS_ADMIN
             else:
                 headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else {}
-                return JSONResponse(status_code=exc.status_code, content=_error_body(exc), headers=headers)
+                body = _error_body(exc)
+                return JSONResponse(status_code=exc.status_code, content=body, headers=headers)
 
     request.state.principal = principal
     marker = principal_context.set_principal(principal)
@@ -142,6 +143,9 @@ async def principal_middleware(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins or ["*"],
+    # Any loopback port while debugging: the console port is configurable, and a
+    # CORS rejection is a terrible way to find out you moved it.
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

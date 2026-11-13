@@ -2,9 +2,12 @@
   "name": "ai-workbench-tooling",
   "private": true,
   "version": "0.1.0",
-  "description": "Local dev tooling for AI Workbench (screenshots / smoke walk-through)",
+  "description": "Local dev tooling for AI Workbench (dev launcher, screenshots, walk-through)",
   "type": "module",
   "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node scripts/dev.mjs --only=api",
+    "dev:web": "node scripts/dev.mjs --only=web",
     "shoot": "node scripts/shoot.mjs"
   },
   "devDependencies": {

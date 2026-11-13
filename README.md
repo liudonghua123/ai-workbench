@@ -54,20 +54,28 @@ Requirements: Python ≥ 3.11, [uv](https://docs.astral.sh/uv/), Node.js ≥ 20,
 ```bash
 git clone <your-repo> ai-workbench && cd ai-workbench
 
-# 1 — backend (REST + MCP on :8000)
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload --port 8000
-
-# 2 — frontend (:3000), in another terminal
-cd frontend
-npm install
+# API (:8000) + console (:3000), both restart on save
+uv sync --project backend
+npm --prefix frontend install
 npm run dev
 
-# 3 — reverse proxy (:80), so apps get a port-free URL — optional but recommended
-cd backend
-uv run python -m app.gateway --port 80
+# reverse proxy (:80), so apps get a port-free URL — optional but recommended
+(cd backend && uv run python -m app.gateway --port 80)
 ```
+
+Ports are yours to move. `WB_API_PORT` is read once and used twice — as
+`uvicorn --port` and as the address the console points at — so the two cannot
+disagree:
+
+```bash
+WB_API_PORT=9000 npm run dev          # API on :9000, console follows
+WB_WEB_PORT=3100 npm run dev          # console on :3100
+npm run dev:api / npm run dev:web     # one half only
+```
+
+Put `WB_API_PORT=9000` in `.env` instead of typing it every time. Same knobs work
+if you keep two terminals (`cd backend && uv run uvicorn app.main:app --port 9000`
+and `cd frontend && WB_API_PORT=9000 npm run dev`).
 
 Open <http://localhost:3000>. Two demo projects are seeded on first boot
 (`WB_BOOTSTRAP_DEMO_DATA=true`).

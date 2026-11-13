@@ -15,11 +15,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+# Absolute, so `cp .env.example .env` in the repo root works no matter which
+# directory uvicorn was started from (relative paths resolve against the CWD,
+# which made the documented `.env` invisible when run from `backend/`).
+# Later files win: the repo root is the shared default, `backend/.env` the
+# machine-specific override.
+ENV_FILES = (str(REPO_ROOT / ".env"), str(REPO_ROOT / "backend" / ".env"))
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="WB_",
-        env_file=(".env", "../../.env"),
+        env_file=ENV_FILES,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -139,6 +146,10 @@ class Settings(BaseSettings):
 
     # --- misc ----------------------------------------------------------
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # In debug the console is allowed on any loopback port, because that is the
+    # whole point of a configurable dev port: `npm run dev -- --port 3101` must
+    # not fail CORS. Disabled with WB_DEBUG=false, where only cors_origins count.
+    cors_allow_loopback: bool = True
     bootstrap_demo_data: bool = True
     mcp_path: str = "/mcp"
 
@@ -153,6 +164,13 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @property
+    def cors_origin_regex(self) -> str:
+        """Loopback on any port — dev only, so a moved console port keeps working."""
+        if self.debug and self.cors_allow_loopback:
+            return r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+        return ""
 
     @property
     def projects_dir(self) -> Path:

@@ -42,8 +42,41 @@ import type {
 } from "./types";
 import { getToken, notifyUnauthorized, tokenQuery } from "./auth";
 
+/**
+ * Where the control plane lives.
+ *
+ * Resolved once at compile time, in this order:
+ *   1. `NEXT_PUBLIC_API_BASE`    — full URL (`npm run dev` injects it, and it is
+ *                                  what a production build bakes in)
+ *   2. `NEXT_PUBLIC_API_ORIGIN` — scheme + host, we append `/api/v1`
+ *   3. `NEXT_PUBLIC_API_HOST` / `NEXT_PUBLIC_API_PORT`
+ *   4. `http://127.0.0.1:8000/api/v1`
+ *
+ * Every other module must use `API_ORIGIN` / `MCP_URL` instead of spelling the
+ * backend out again: a hard-coded `:8000` in a page is how the console ends up
+ * talking to a port the backend never opened.
+ */
+function resolvedOrigin(): string {
+  const explicit = process.env.NEXT_PUBLIC_API_ORIGIN?.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+  const host = process.env.NEXT_PUBLIC_API_HOST?.trim() || "127.0.0.1";
+  const raw = process.env.NEXT_PUBLIC_API_PORT?.trim() || "8000";
+  const port = /^\d+$/.test(raw) ? raw : "8000";
+  // the default port of a scheme is implied, the rest has to be spelled out
+  if (port === "443") return `https://${host}`;
+  if (port === "80") return `http://${host}`;
+  return `http://${host}:${port}`;
+}
+
+export const API_ORIGIN = process.env.NEXT_PUBLIC_API_BASE
+  ? process.env.NEXT_PUBLIC_API_BASE.replace(/\/api\/v1\/?$/, "").replace(/\/+$/, "")
+  : resolvedOrigin();
+
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || `${API_ORIGIN}/api/v1`;
+
+/** What the MCP client snippet points at — same listener, different path. */
+export const MCP_URL = `${API_ORIGIN}/mcp`;
 
 export class ApiError extends Error {
   code: string;

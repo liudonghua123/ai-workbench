@@ -47,20 +47,26 @@ AI 工作台就是这套接口。你可视化创建项目，平台按约定自�
 ```bash
 git clone <your-repo> ai-workbench && cd ai-workbench
 
-# 1 —— 后端（REST + MCP 同端口 :8000）
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload --port 8000
-
-# 2 —— 前端（:3000），另开一个终端
-cd frontend
-npm install
+# API（:8000）+ 控制台（:3000），改代码自动重启
+uv sync --project backend
+npm --prefix frontend install
 npm run dev
 
-# 3 —— 反向代理（:80），让应用拿到不带端口的网址；可选，但建议开
-cd backend
-uv run python -m app.gateway --port 80
+# 反向代理（:80），让应用拿到不带端口的网址；可选，但建议开
+(cd backend && uv run python -m app.gateway --port 80)
 ```
+
+端口随你换。`WB_API_PORT` 只读一次、用两次 —— 既是 `uvicorn --port`，也是控制台指向的地址，所以两边不可能对不上：
+
+```bash
+WB_API_PORT=9000 npm run dev          # API 走 :9000，前端自动跟随
+WB_WEB_PORT=3100 npm run dev           # 控制台走 :3100
+npm run dev:api / npm run dev:web      # 只起一半
+```
+
+不想每次都敲，就把 `WB_API_PORT=9000` 写进 `.env`。开两个终端的老办法也一样：
+`cd backend && uv run uvicorn app.main:app --port 9000` 配
+`cd frontend && WB_API_PORT=9000 npm run dev`。
 
 打开 <http://localhost:3000>。首次启动会写入两个演示项目（`WB_BOOTSTRAP_DEMO_DATA=true`）。
 

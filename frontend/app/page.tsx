@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { ProjectCard } from "@/components/ProjectCard";
 import { Empty, LoadingRows, Pill, Skeleton, useToast } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, API_ORIGIN } from "@/lib/api";
 import { eventTone, relativeTime } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import type { AgentRun, Overview, Project } from "@/lib/types";
@@ -98,7 +98,7 @@ export default function DashboardPage() {
             <Icon name="close" size={15} /> {t("dash.backendDown")}
           </div>
           <p className="muted" style={{ fontSize: 12.5, margin: "6px 0 0" }}>
-            {t("dash.backendDownHint", { error, url: "http://127.0.0.1:8000" })}
+            {t("dash.backendDownHint", { error, url: API_ORIGIN })}
           </p>
         </div>
       ) : null}

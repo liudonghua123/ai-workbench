@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { CopyButton, Empty, Pill, Skeleton, StatusPill, useToast } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, MCP_URL } from "@/lib/api";
 import { MCP_STATUS, relativeTime } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import type { McpServer } from "@/lib/types";
@@ -211,7 +211,7 @@ export default function McpPage() {
             >
               {`{
   "mcpServers": {
-    "workbench": { "url": "http://127.0.0.1:8000/mcp" }
+    "workbench": { "url": "${MCP_URL}" }
   }
 }`}
             </pre>
