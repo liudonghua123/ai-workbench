@@ -45,7 +45,11 @@ type IconName =
   | "logout"
   | "key"
   | "lock"
-  | "ticket";
+  | "ticket"
+  | "eye"
+  | "pencil"
+  | "download"
+  | "upload";
 
 const PATHS: Record<IconName, string> = {
   dashboard: "M3 3h7v7H3zM14 3h7v4h-7zM14 10h7v11h-7zM3 13h7v8H3z",
@@ -95,6 +99,10 @@ const PATHS: Record<IconName, string> = {
   key: "M14.5 3a6.5 6.5 0 1 0-3.2 12.1L4 22.4 2.6 21l1.9-1.9L3 17.6l1.4-1.4 1.5 1.5 2.2-2.2A6.5 6.5 0 0 0 14.5 3ZM16.5 7.5h.01",
   lock: "M6 10h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1ZM8 10V7a4 4 0 0 1 8 0v3",
   ticket: "M3 9V7a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v2a3 3 0 0 0 0 6v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2a3 3 0 0 0 0-6ZM12 6v12",
+  eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+  pencil: "M4 20l4-1L20.5 6.5a2.1 2.1 0 0 0-3-3L5 16l-1 4ZM14 7l3 3",
+  download: "M12 3v12M7 11l5 5 5-5M4 20h16",
+  upload: "M12 17V5M7 9l5-5 5 5",
 };
 
 export function Icon({

@@ -39,6 +39,8 @@ import type {
   TlsQueueItem,
   TlsStatus,
   TreeNode,
+  HubEntry,
+  SkillContent,
 } from "./types";
 import { getToken, notifyUnauthorized, tokenQuery } from "./auth";
 
@@ -250,9 +252,19 @@ export const api = {
   deleteMcp: (id: string) => del(`/mcp-servers/${id}`),
 
   skills: () => request<Skill[]>("/skills"),
+  skillContent: (id: string) => request<SkillContent>(`/skills/${id}/content`),
+  saveSkillContent: (id: string, body: string, meta?: Record<string, unknown>) =>
+    put<{ skill: Skill }>(`/skills/${id}/content`, { body, meta }),
+  installSkillUrl: (url: string, key?: string) =>
+    post<Skill>("/skills/install-url", { url, key }),
+  uploadSkill: (payload: { name: string; text?: string; archive?: string }) =>
+    post<Skill>("/skills/upload", payload),
+  skillHub: () =>
+    request<{ entries: HubEntry[]; installed_keys: string[] }>("/skills/hub"),
   toggleSkill: (id: string) => post<Skill>(`/skills/${id}/toggle`),
   scanSkills: () => post<{ scanned: number; root: string }>("/skills/scan"),
   createSkill: (payload: Partial<Skill>) => post<Skill>("/skills", payload),
+  deleteSkill: (id: string) => del(`/skills/${id}`),
 
   agents: () => request<Agent[]>("/agents"),
   createAgent: (payload: Partial<Agent>) => post<Agent>("/agents", payload),

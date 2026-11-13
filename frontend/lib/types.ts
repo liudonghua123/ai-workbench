@@ -235,6 +235,28 @@ export interface Skill {
   tools: string[];
 }
 
+export interface SkillFile {
+  path: string;
+  size: number;
+  content?: string;
+  binary?: boolean;
+  truncated?: boolean;
+}
+
+export interface SkillContent {
+  skill: Skill;
+  dir: string;
+  main: { meta: Record<string, unknown>; body: string; raw: string } | null;
+  files: SkillFile[];
+}
+
+export interface HubEntry {
+  repo: string;
+  url: string;
+  description: string;
+  tags: string[];
+}
+
 export interface AgentStep {
   index: number;
   thought: string;
