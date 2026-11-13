@@ -105,12 +105,32 @@ export default function SkillsPage() {
   };
 
   const openEdit = (content: SkillContent) => {
-    setPanel({
-      kind: "edit",
-      id: content.skill.id,
-      meta: content.main?.meta ?? {},
-      body: content.main?.body ?? "",
-    });
+    if (content.main) {
+      setPanel({
+        kind: "edit",
+        id: content.skill.id,
+        meta: content.main.meta,
+        body: content.main.body,
+      });
+      return;
+    }
+    // metadata-only skill: scaffold a SKILL.md from the row, so
+    // "Edit" works even before the skill ever had files on disk
+    const skill = content.skill;
+    const metaLines = [`name: ${skill.name}`];
+    if (skill.description) metaLines.push(`description: ${skill.description}`);
+    if (skill.version) metaLines.push(`version: ${skill.version}`);
+    const scaffold = [
+      "---",
+      ...metaLines,
+      "---",
+      "",
+      `# ${skill.name}`,
+      "",
+      skill.description || "",
+      "",
+    ].join("\n");
+    setPanel({ kind: "edit", id: skill.id, meta: {}, body: scaffold });
   };
 
   const saveEdit = async (state: Extract<Panel, { kind: "edit" }>) => {
@@ -435,7 +455,7 @@ function ViewPanel({
         <button className="icon-btn" title={t("common.delete")} onClick={onDelete}>
           <Icon name="trash" size={13} />
         </button>
-        <button className="btn btn-sm btn-accent" onClick={onEdit} disabled={!content.main}>
+        <button className="btn btn-sm btn-accent" onClick={onEdit}>
           <Icon name="pencil" size={11} />
           {t("skill.edit")}
         </button>

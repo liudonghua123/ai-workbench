@@ -276,7 +276,11 @@ def save_skill_content(
     if row is None:
         raise NotFoundError("Skill 不存在")
     body = str(payload.get("body") or "")
-    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else None
+    # an empty dict means "no opinion" — composing an empty
+    # frontmatter would bury the real one inside the body
+    meta = payload.get("meta")
+    if not isinstance(meta, dict) or not meta:
+        meta = None
     text = skill_files.write_main(row.key, body, meta)
     parsed, parsed_body = skill_files.parse_frontmatter(text)
     row.manifest = {**row.manifest, **parsed}
