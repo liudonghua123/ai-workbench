@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api import auth, orgs, platform, projects, registry as registry_api, system, workspace
+from app.api import auth, orgs, platform, projects, system, workspace
+from app.api import registry as registry_api
 
 api_router = APIRouter()
 api_router.include_router(auth.router)

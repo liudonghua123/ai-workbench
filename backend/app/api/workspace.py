@@ -19,12 +19,13 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlmodel import Session
 
+from app.api.deps import load_scoped
 from app.core.db import get_session
 from app.core.errors import ValidationFailed
-from app.api.deps import load_scoped
 from app.core.security import Principal, get_principal
 from app.schemas import GitCommitRequest, GitRefRequest, PublishRequest
-from app.services import conventions, deployments as deploy_service, gitops, scaffold
+from app.services import conventions, gitops, scaffold
+from app.services import deployments as deploy_service
 from app.services.serializers import serialize_deployment
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["workspace"])

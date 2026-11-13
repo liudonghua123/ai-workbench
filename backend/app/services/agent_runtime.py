@@ -113,9 +113,9 @@ def _highlights(steps: list[Step]) -> list[str]:
                 if signature in seen:
                     continue
                 seen.add(signature)
-                lines.append(
-                    f"- 部署 {dep.get('version')}：{dep.get('status')} {dep.get('url') or ''}".rstrip()
-                )
+                status = dep.get("status")
+                dep_line = f"- 部署 {dep.get('version')}：{status} {dep.get('url') or ''}"
+                lines.append(dep_line.rstrip())
     return lines
 
 
@@ -172,7 +172,8 @@ SYSTEM_PROMPT = """你是 AI Workbench 的操盘 Agent。你可以通过工具�
 - 你继承调用者的权限：同一个工具，开发者能调、只读成员不能调。403 不是 bug，是边界。
 - 同样继承数据范围：调用者是 own 范围时，list_projects 只返回他拥有或被授权的项目，
   别人的项目一律 404。看不到就说明"不在你的范围内"，不要换个 id 反复试。
-- 动手前若不确定，先 describe_access 看自己的角色、权限集与 data_scope，或 check_permission 预检单个权限。
+- 动手前若不确定，先 describe_access 看自己的角色、权限集与 data_scope，
+  或 check_permission 预检单个权限。
 - 不要试图绕过：不要改配置、不要伪造身份、不要在只读库里写。被拒绝就如实告诉用户谁该做什么。
 - 组织与身份源：list_organizations / list_org_members / list_sso_providers 可读；
   SSO 连接（CAS / OAuth2 / OIDC / 企业微信 / 钉钉）的密钥只存在服务端，任何工具都拿不到。
@@ -189,7 +190,10 @@ class LlmHarness(Harness):
         schemas = llm.tool_schemas(task.tools)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": "工作台现状：" + json.dumps(describe_workbench(), ensure_ascii=False)},
+            {
+                "role": "system",
+                "content": "工作台现状：" + json.dumps(describe_workbench(), ensure_ascii=False),
+            },
             {"role": "user", "content": self._user_message(task)},
         ]
         conclusion = ""
@@ -240,7 +244,10 @@ class LlmHarness(Harness):
                     }
                 )
         else:
-            conclusion = f"达到最大步数上限（{settings.agent_max_steps}），已停止。你可以继续下达指令让我接着做。"
+            conclusion = (
+                f"达到最大步数上限（{settings.agent_max_steps}），已停止。"
+                "你可以继续下达指令让我接着做。"
+            )
 
         return render_report(task.prompt, steps, conclusion), steps
 
@@ -352,14 +359,20 @@ class LocalHarness(Harness):
         wants_discard = bool(re.search(r"撤销|放弃|discard|还原", lowered))
         wants_git = bool(re.search(r"版本|提交|commit|\bgit\b|历史|history", lowered))
         wants_convention = bool(re.search(r"规范|约定|体检|convention|conformance", lowered))
-        wants_access = bool(re.search(r"权限|角色|成员|组织|sso|单点|rbac|permission|access|member|role", lowered))
+        wants_access = bool(
+            re.search(r"权限|角色|成员|组织|sso|单点|rbac|permission|access|member|role", lowered)
+        )
         wants_deploy = bool(re.search(r"部署|deploy", lowered))
         wants_status = bool(re.search(r"状态|日志|status|log", lowered))
         wants_list = bool(re.search(r"列出|列表|所有项目|list", lowered))
 
         if wants_create:
             template_key = next(
-                (key for key, hints in self.TEMPLATE_HINTS.items() if any(h in lowered for h in hints)),
+                (
+                    key
+                    for key, hints in self.TEMPLATE_HINTS.items()
+                    if any(h in lowered for h in hints)
+                ),
                 "fullstack-fastapi-nextjs",
             )
             name = self._extract_name(prompt)
@@ -372,12 +385,19 @@ class LocalHarness(Harness):
             )
             if not isinstance(created, dict):
                 return render_report(prompt, steps), steps
-            call("读取该类型的规范与体检结果", "check_project_conventions", project_id=created["id"])
+            call(
+                "读取该类型的规范与体检结果", "check_project_conventions", project_id=created["id"]
+            )
             if wants_preview or wants_run or wants_publish:
                 call("启动预览环境", "start_preview", project_id=created["id"])
                 call("读取预览状态与日志", "preview_status", project_id=created["id"])
             if wants_publish:
-                call("提交并发布首个版本", "publish_project", project_id=created["id"], message="首次发布")
+                call(
+                    "提交并发布首个版本",
+                    "publish_project",
+                    project_id=created["id"],
+                    message="首次发布",
+                )
                 call("确认部署状态", "deployment_status", project_id=created["id"])
             return render_report(prompt, steps), steps
 
@@ -386,27 +406,56 @@ class LocalHarness(Harness):
         # Same order the system prompt asks for: read the type spec before touching
         # anything. Without this, "检查规范然后启动预览" would only do the second half.
         if wants_convention and project_id:
-            call("按项目类型体检，确认目录、命令与契约", "check_project_conventions", project_id=project_id)
+            call(
+                "按项目类型体检，确认目录、命令与契约",
+                "check_project_conventions",
+                project_id=project_id,
+            )
 
         if wants_revert:
             if project_id:
-                history = call("读取提交历史以定位回滚点", "git_log", project_id=project_id, limit=10) or []
+                history = (
+                    call(
+                        "读取提交历史以定位回滚点", "git_log", project_id=project_id, limit=10
+                    )
+                    or []
+                )
                 if history:
-                    call("回退最近一次提交（生成新提交）", "git_revert_commit", project_id=project_id, sha=history[0]["sha"])
+                    call(
+                        "回退最近一次提交（生成新提交）",
+                        "git_revert_commit",
+                        project_id=project_id,
+                        sha=history[0]["sha"],
+                    )
                     if wants_publish:
-                        call("发布回滚后的版本", "publish_project", project_id=project_id, message="回滚发布")
+                        call(
+                            "发布回滚后的版本",
+                            "publish_project",
+                            project_id=project_id,
+                            message="回滚发布",
+                        )
             return render_report(prompt, steps), steps
 
         if wants_discard:
             if project_id:
                 state = call("读取工作区改动", "git_status", project_id=project_id) or {}
                 for item in (state.get("files") or [])[:20]:
-                    call(f"还原 {item['path']}", "git_restore_file", project_id=project_id, path=item["path"])
+                    call(
+                        f"还原 {item['path']}",
+                        "git_restore_file",
+                        project_id=project_id,
+                        path=item["path"],
+                    )
             return render_report(prompt, steps), steps
 
         if wants_publish:
             if project_id:
-                call("提交并发布当前工作区", "publish_project", project_id=project_id, message=prompt[:80])
+                call(
+                    "提交并发布当前工作区",
+                    "publish_project",
+                    project_id=project_id,
+                    message=prompt[:80],
+                )
                 call("确认部署状态", "deployment_status", project_id=project_id)
             return render_report(prompt, steps), steps
 
@@ -577,11 +626,10 @@ def run(agent_key: str, prompt: str, project_id: str | None = None) -> dict[str,
         except HarnessError as exc:
             fallback_note = f"{harness.name} 未能完成（{exc.message}），已回退到内置规划器"
             _, rest = get_harness("local").execute(task)
-            steps = _reindex(
-                [Step(index=1, thought=fallback_note, tool="__harness__", ok=False, error=exc.message)]
-                + exc.steps
-                + rest
+            first = Step(
+                index=1, thought=fallback_note, tool="__harness__", ok=False, error=exc.message
             )
+            steps = _reindex([first] + exc.steps + rest)
             output = render_report(prompt, steps)
             used = "local (fallback)"
 

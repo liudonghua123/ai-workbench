@@ -96,7 +96,8 @@ _RAW: list[tuple[str, str, str, str, str, str]] = [
     ("role:manage", "access", "Manage roles", "管理角色",
      "Create custom roles and edit permission sets", "新建自定义角色与编辑权限集"),
     ("sso:read", "access", "View identity providers", "查看身份源",
-     "See configured CAS/OAuth2/OIDC/WeCom/DingTalk connections", "查看已配置的 CAS/OAuth2/OIDC/企微/钉钉 连接"),
+     "See configured CAS/OAuth2/OIDC/WeCom/DingTalk connections",
+     "查看已配置的 CAS/OAuth2/OIDC/企微/钉钉 连接"),
     ("sso:manage", "access", "Manage identity providers", "管理身份源",
      "Add, edit, enable or test an SSO connection", "新增、编辑、启停或测试 SSO 连接"),
     ("org:read", "access", "View organization", "查看组织",
@@ -431,7 +432,9 @@ ROUTE_RULES: tuple[RouteRule, ...] = (
     RouteRule(re.compile(rf"/api/v1/projects/{PROJECT_ID}/git.*"), _rw("code:read", "code:write")),
     RouteRule(re.compile(rf"/api/v1/projects/{PROJECT_ID}/file"), _rw("code:read", "code:write")),
     RouteRule(re.compile(rf"/api/v1/projects/{PROJECT_ID}/tree"), {"*": "code:read"}),
-    RouteRule(re.compile(rf"/api/v1/projects/{PROJECT_ID}/database.*"), _rw("data:read", "data:read")),
+    RouteRule(
+        re.compile(rf"/api/v1/projects/{PROJECT_ID}/database.*"), _rw("data:read", "data:read")
+    ),
     RouteRule(re.compile(rf"/api/v1/projects/{PROJECT_ID}/storage.*"), {"*": "data:read"}),
     RouteRule(re.compile(rf"/api/v1/projects/{PROJECT_ID}/resources"), {"*": "data:read"}),
     RouteRule(re.compile(rf"/api/v1/projects/{PROJECT_ID}/env"), _rw("env:read", "env:write")),

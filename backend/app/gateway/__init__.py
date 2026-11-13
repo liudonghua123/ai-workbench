@@ -19,7 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["Route", "RouteTable", "create_app", "normalize_host", "route_table"]
 
 
-def create_app(*args: Any, **kwargs: Any) -> "Gateway":
+def create_app(*args: Any, **kwargs: Any) -> Gateway:
     """Build the gateway ASGI application (imports the proxy on demand)."""
     from app.gateway.proxy import create_app as build
 

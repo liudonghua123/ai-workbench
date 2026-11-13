@@ -35,7 +35,9 @@ class LocalDomainProvider(DomainProvider):
             return {}
 
     def _write_zone(self, zone: dict[str, Any]) -> None:
-        self._zone_path().write_text(json.dumps(zone, indent=2, ensure_ascii=False), encoding="utf-8")
+        self._zone_path().write_text(
+            json.dumps(zone, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     def _suffix_of(self, fqdn: str) -> str:
         parts = fqdn.split(".", 1)

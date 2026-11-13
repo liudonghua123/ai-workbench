@@ -62,7 +62,8 @@ AGENTS = [
         "description": "根据一句话需求选择合适的模板，创建项目、部署并汇报入口地址。",
         "system_prompt": (
             "你是应用架构师。先用 list_templates 判断最合适的模板，再 create_project，"
-            "然后 deploy_project 并通过 deployment_status 确认健康检查，最后用一段话汇报入口地址与资源清单。"
+            "然后 deploy_project 并通过 deployment_status 确认健康检查，"
+            "最后用一段话汇报入口地址与资源清单。"
         ),
         "permission_scope": "full",
         "skills": ["design-system", "api-contract"],

@@ -226,7 +226,9 @@ def _deps_ready(root: Path, runtime: str) -> tuple[bool, str]:
         return True, ".venv 已就绪"
     if "static" in (runtime or ""):
         return False, "静态项目无需进程"
-    return False, f"依赖未安装（{root.name} 下没有 node_modules/.venv），运行 build_command 后可启用"
+    return False, (
+        f"依赖未安装（{root.name} 下没有 node_modules/.venv），运行 build_command 后可启用"
+    )
 
 
 def _static_reason(spec: DeploySpec) -> str:

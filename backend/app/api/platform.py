@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Iterator
+from collections.abc import Iterator
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
@@ -14,7 +14,7 @@ from app.core.db import engine, get_session
 from app.core.errors import NotFoundError, ValidationFailed
 from app.core.security import Principal, can_access, get_principal
 from app.models import Deployment, ProjectResource, ResourceKind
-from app.providers import database_provider, deploy_provider, storage_provider, registry
+from app.providers import database_provider, deploy_provider, registry, storage_provider
 from app.schemas import DeployRequest
 from app.services import deployments as deploy_service
 from app.services import scaffold, sql_guard
@@ -166,7 +166,11 @@ def stream_deployment(
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 
@@ -176,7 +180,9 @@ async def stop_deployment(
     session: Session = Depends(get_session),
     principal: Principal = Depends(get_principal),
 ):
-    row = await deploy_service.stop_deployment(session, _deployment(session, deployment_id, principal))
+    row = await deploy_service.stop_deployment(
+        session, _deployment(session, deployment_id, principal)
+    )
     return serialize_deployment(row)
 
 
@@ -281,6 +287,8 @@ def list_providers():
             "domain": settings.domain_provider,
             "deploy": settings.deploy_provider,
         },
-        "available": {kind: registry.available(kind) for kind in ("storage", "database", "domain", "deploy")},
+        "available": {
+            kind: registry.available(kind) for kind in ("storage", "database", "domain", "deploy")
+        },
         "deploy_mode": deploy_provider().runtime_info(),
     }

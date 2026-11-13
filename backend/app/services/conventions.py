@@ -575,9 +575,7 @@ def check(project: Project) -> dict[str, Any]:
     for item in checks:
         counts[item.status] = counts.get(item.status, 0) + 1
 
-    manifest = load_manifest(project)
-    return {
-        "type": resolved.spec.type,
+    return {        "type": resolved.spec.type,
         "label": resolved.spec.label,
         "summary": resolved.spec.summary,
         "spec": resolved.spec.to_public(),

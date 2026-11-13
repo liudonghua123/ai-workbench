@@ -33,7 +33,9 @@ def _owner(session: Session, owner_id: str) -> tuple[str, str]:
     return user.name or user.email, user.email
 
 
-def serialize_project(session: Session, project: Project, *, reconcile: bool = True) -> dict[str, Any]:
+def serialize_project(
+    session: Session, project: Project, *, reconcile: bool = True
+) -> dict[str, Any]:
     if reconcile:
         # imported here to keep serializers free of a module-level cycle
         from app.services.deployments import reconcile_preview
@@ -42,7 +44,9 @@ def serialize_project(session: Session, project: Project, *, reconcile: bool = T
     resources = session.exec(
         select(ProjectResource).where(ProjectResource.project_id == project.id)
     ).all()
-    domains = session.exec(select(DomainBinding).where(DomainBinding.project_id == project.id)).all()
+    domains = session.exec(
+        select(DomainBinding).where(DomainBinding.project_id == project.id)
+    ).all()
     deployments = session.exec(
         select(Deployment)
         .where(Deployment.project_id == project.id)
@@ -157,7 +161,10 @@ def serialize_mcp(server: McpServer) -> dict[str, Any]:
         "endpoint": server.endpoint,
         "command": server.command,
         "args": server.args,
-        "env": {k: ("***" if "KEY" in k.upper() or "TOKEN" in k.upper() else v) for k, v in (server.env or {}).items()},
+        "env": {
+            k: ("***" if "KEY" in k.upper() or "TOKEN" in k.upper() else v)
+            for k, v in (server.env or {}).items()
+        },
         "status": server.status,
         "is_system": server.is_system,
         "tools": server.tools,

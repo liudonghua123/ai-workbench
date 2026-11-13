@@ -49,7 +49,9 @@ def _register() -> None:
 
 def _extra_tools() -> None:
     @mcp.tool(name="run_workbench_agent")
-    def run_workbench_agent(agent_key: str, prompt: str, project_id: str | None = None) -> dict[str, Any]:
+    def run_workbench_agent(
+        agent_key: str, prompt: str, project_id: str | None = None
+    ) -> dict[str, Any]:
         """Delegate a high-level goal to a configured workbench agent (it plans and calls tools)."""
         return run_agent_harness(agent_key, prompt, project_id=project_id)
 

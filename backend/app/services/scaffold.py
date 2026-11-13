@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -13,15 +13,13 @@ from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationFailed
 from app.core.ids import allocate_port, new_id, random_suffix, slugify
 from app.models import (
+    DomainBinding,
+    EnvVar,
+    Event,
     Project,
     ProjectResource,
     ProjectStatus,
-    ProjectType,
     ResourceKind,
-    DomainBinding,
-    DomainStatus,
-    EnvVar,
-    Event,
     utcnow,
 )
 from app.providers import database_provider, domain_provider, storage_provider
@@ -53,7 +51,9 @@ class CreateProjectSpec:
     owner_id: str = ""
 
 
-def log_event(session: Session, kind: str, message: str, *, project_id: str | None = None, **payload):
+def log_event(
+    session: Session, kind: str, message: str, *, project_id: str | None = None, **payload
+):
     session.add(
         Event(
             id=new_id("evt"),
@@ -106,7 +106,7 @@ def build_context(
         "template_version": template.version,
         "project_type": template.type,
         "dev_command": template.dev_command or template.run_command or "see README",
-        "year": str(datetime.now(timezone.utc).year),
+        "year": str(datetime.now(UTC).year),
     }
     ctx.update({k: str(v) for k, v in spec.variables.items() if v is not None})
     return ctx
@@ -125,7 +125,9 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
     existing = session.exec(select(Project)).all()
     # a preview must never compete with production for a socket, so it gets its own
     # port from the same range; both are derived, never configured
-    taken_ports = {p.port for p in existing if p.port} | {p.dev_port for p in existing if p.dev_port}
+    taken_ports = {
+        p.port for p in existing if p.port
+    } | {p.dev_port for p in existing if p.dev_port}
     port = allocate_port(taken_ports)
     dev_port = allocate_port(taken_ports | {port})
     context = build_context(spec, template, slug, port, dev_port)
@@ -165,7 +167,9 @@ def create_project(session: Session, spec: CreateProjectSpec) -> Project:
     try:
         _write_files(repo_path, template, context)
         project.meta = {**project.meta, "files": sorted(template.files)}
-        _provision_resources(session, project, template, spec.resources or template.resources, context)
+        _provision_resources(
+            session, project, template, spec.resources or template.resources, context
+        )
         _set_env(session, project, context)
         _bind_domain(session, project, context["fqdn"], port, is_primary=True)
         _bind_domain(

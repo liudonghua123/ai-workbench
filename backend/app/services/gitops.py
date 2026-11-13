@@ -61,6 +61,13 @@ def _git(root: Path, *args: str, timeout: int = 25) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def _count_diff_lines(text: str, marker: str, header: str) -> int:
+    """Count diff lines starting with ``marker`` but not the file header."""
+    return sum(
+        1 for line in text.splitlines() if line.startswith(marker) and not line.startswith(header)
+    )
+
+
 def available() -> bool:
     try:
         return _git(Path.cwd(), "--version")[0] == 0
@@ -263,7 +270,12 @@ def diff(root: Path, path: str = "", ref: str = "") -> dict[str, Any]:
             out = (out + "\n" + staged).strip("\n")
 
     if code != 0:
-        return {"path": path, "ref": ref or "HEAD", "diff": "", "error": err.strip() or "git diff failed"}
+        return {
+            "path": path,
+            "ref": ref or "HEAD",
+            "diff": "",
+            "error": err.strip() or "git diff failed",
+        }
 
     # an untracked file has no diff — synthesise one so the UI never shows a blank pane
     if not out.strip() and path and (root / path).is_file():
@@ -272,8 +284,8 @@ def diff(root: Path, path: str = "", ref: str = "") -> dict[str, Any]:
             f"+{line}" for line in text.splitlines()[:400]
         )
 
-    additions = sum(1 for line in out.splitlines() if line.startswith("+") and not line.startswith("+++"))
-    deletions = sum(1 for line in out.splitlines() if line.startswith("-") and not line.startswith("---"))
+    additions = _count_diff_lines(out, "+", "+++")
+    deletions = _count_diff_lines(out, "-", "---")
     return {
         "path": path,
         "ref": ref or "HEAD",
@@ -293,8 +305,8 @@ def commit_diff(root: Path, sha: str, path: str = "") -> dict[str, Any]:
     code, out, err = _git(root, *args)
     if code != 0:
         return {"path": path, "ref": sha, "diff": "", "error": err.strip() or "git show failed"}
-    additions = sum(1 for line in out.splitlines() if line.startswith("+") and not line.startswith("+++"))
-    deletions = sum(1 for line in out.splitlines() if line.startswith("-") and not line.startswith("---"))
+    additions = _count_diff_lines(out, "+", "+++")
+    deletions = _count_diff_lines(out, "-", "---")
     return {
         "path": path,
         "ref": sha,

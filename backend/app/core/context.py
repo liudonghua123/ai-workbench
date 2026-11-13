@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover
     from app.core.security import Principal
 
-_current: ContextVar["Principal | None"] = ContextVar("wb_principal", default=None)
+_current: ContextVar[Principal | None] = ContextVar("wb_principal", default=None)
 _client_ip: ContextVar[str] = ContextVar("wb_client_ip", default="")
 
 
-def set_principal(principal: "Principal | None"):
+def set_principal(principal: Principal | None):
     return _current.set(principal)
 
 
@@ -28,7 +28,7 @@ def reset_principal(token) -> None:
         pass
 
 
-def current_principal() -> "Principal | None":
+def current_principal() -> Principal | None:
     return _current.get()
 
 

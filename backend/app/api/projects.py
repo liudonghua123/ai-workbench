@@ -6,11 +6,11 @@ from sqlmodel import Session, select
 from app.api.deps import load_scoped, scoped_project, visible_projects
 from app.core.config import settings
 from app.core.db import get_session
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import NotFoundError
 from app.core.security import Principal, get_principal
 from app.models import DomainBinding, EnvVar, Project, ProjectStatus
-from app.schemas import DomainCreate, EnvVarUpsert, FileWrite, ProjectCreate
 from app.providers import domain_provider
+from app.schemas import DomainCreate, EnvVarUpsert, FileWrite, ProjectCreate
 from app.services import scaffold
 from app.services.scaffold import CreateProjectSpec
 from app.services.serializers import serialize_domain, serialize_env, serialize_project

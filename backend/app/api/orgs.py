@@ -842,7 +842,9 @@ def create_sso(
         default_role_key=payload.default_role_key,
         auto_create_users=payload.auto_create_users,
         auto_join=payload.auto_join,
-        allowed_domains=[d.strip().lower().lstrip("@") for d in payload.allowed_domains if d.strip()],
+        allowed_domains=[
+            d.strip().lower().lstrip("@") for d in payload.allowed_domains if d.strip()
+        ],
     )
     # configured != verified: only probe() is allowed to claim "ready"
     row.status = "unchecked" if auth_providers.build(row).ready() else "unconfigured"
@@ -886,7 +888,9 @@ def update_sso(
         row.default_role_key = payload.default_role_key
     row.auto_create_users = payload.auto_create_users
     row.auto_join = payload.auto_join
-    row.allowed_domains = [d.strip().lower().lstrip("@") for d in payload.allowed_domains if d.strip()]
+    row.allowed_domains = [
+        d.strip().lower().lstrip("@") for d in payload.allowed_domains if d.strip()
+    ]
     row.enabled = payload.enabled
     row.status = "unchecked" if auth_providers.build(row).ready() else "unconfigured"
     row.updated_at = identity.utcnow()
@@ -932,7 +936,8 @@ def probe_sso(
     if row is None or row.org_id != org.id:
         raise NotFoundError("身份源不存在")
     result = auth_providers.build(row).probe()
-    row.status = "ready" if result.get("ok") else ("error" if result.get("status") == "error" else "unconfigured")
+    ok = result.get("ok")
+    row.status = "ready" if ok else ("error" if result.get("status") == "error" else "unconfigured")
     row.last_error = "" if result.get("ok") else str(result.get("message") or "")
     row.last_check_at = identity.utcnow()
     session.add(row)

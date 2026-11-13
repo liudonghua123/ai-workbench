@@ -13,20 +13,19 @@ dump cannot be replayed as anyone's session.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, select
 
 from app.core import passwords
+from app.core import permissions as perms
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.ids import new_id, slugify
-from app.core import permissions as perms
 from app.models import (
     AuthRequest,
     Identity,
-    IdentityKind,
     IdentityProvider,
     Invitation,
     Membership,
@@ -34,25 +33,27 @@ from app.models import (
     Organization,
     OrgStatus,
     Role,
-    Session as SessionModel,
     User,
     UserStatus,
 )
+from app.models import (
+    Session as SessionModel,
+)
 from app.providers import auth as auth_providers
-from app.providers.auth import AuthProviderError, AuthorizeContext, ExternalProfile
+from app.providers.auth import AuthorizeContext, AuthProviderError, ExternalProfile
 from app.services import audit
 
 logger = logging.getLogger("workbench.identity")
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 # --------------------------------------------------------------------------
@@ -62,7 +63,9 @@ def _aware(value: datetime | None) -> datetime | None:
 
 def ensure_builtin_roles(session: Session, org: Organization) -> list[Role]:
     """Seed the five builtin roles for one organization (idempotent)."""
-    existing = {row.key: row for row in session.exec(select(Role).where(Role.org_id == org.id)).all()}
+    existing = {
+        row.key: row for row in session.exec(select(Role).where(Role.org_id == org.id)).all()
+    }
     created: list[Role] = []
     healed = False
     for spec in perms.BUILTIN_ROLES:
@@ -461,10 +464,15 @@ def _domain_allowed(provider: IdentityProvider, email: str) -> bool:
 def provision(
     session: Session, provider: IdentityProvider, profile: ExternalProfile
 ) -> tuple[User, Membership | None, bool]:
-    """Link or create the user, then make sure they are a member. Returns (user, membership, created)."""
+    """Link or create the user, then make sure they are a member.
+
+    Returns (user, membership, created).
+    """
     if not profile.email:
         # addressable fallback: CAS often returns only a uid
-        profile.email = f"{profile.subject}@{(provider.config or {}).get('email_domain') or 'sso.local'}"
+        profile.email = (
+            f"{profile.subject}@{(provider.config or {}).get('email_domain') or 'sso.local'}"
+        )
     if not _domain_allowed(provider, profile.email):
         raise ForbiddenError(f"邮箱域不在允许范围内: {profile.email}")
 
@@ -508,7 +516,11 @@ def provision(
 
     membership: Membership | None = None
     if provider.auto_join:
-        org = session.get(Organization, provider.org_id) if provider.org_id else default_org(session)
+        org = (
+            session.get(Organization, provider.org_id)
+            if provider.org_id
+            else default_org(session)
+        )
         if org is None or org.status != OrgStatus.ACTIVE:
             raise ForbiddenError("身份源所属组织不可用")
         existing = membership_for(session, org.id, user.id)
@@ -665,7 +677,9 @@ def serialize_user(user: User, membership: Membership | None = None) -> dict[str
     }
 
 
-def serialize_org(org: Organization, *, role_key: str = "", counts: dict[str, int] | None = None) -> dict[str, Any]:
+def serialize_org(
+    org: Organization, *, role_key: str = "", counts: dict[str, int] | None = None
+) -> dict[str, Any]:
     return {
         "id": org.id,
         "slug": org.slug,

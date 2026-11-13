@@ -19,22 +19,23 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
 
-from app.core import passwords, security
+from app.core import passwords
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.security import Principal, get_principal
 from app.models import (
-    Identity,
     IdentityProvider,
     Membership,
     MemberStatus,
     Organization,
-    Session as SessionModel,
     User,
+)
+from app.models import (
+    Session as SessionModel,
 )
 from app.providers import auth as auth_providers
 from app.schemas import LocalLoginRequest, PasswordChange, SignupRequest, SwitchOrgRequest

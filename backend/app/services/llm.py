@@ -13,7 +13,8 @@ capability therefore never means writing a JSON schema by hand.
 from __future__ import annotations
 
 import types
-from typing import Any, Callable, Union, get_args, get_origin, get_type_hints
+from collections.abc import Callable
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 import httpx
 

@@ -48,7 +48,12 @@ class LocalStorageProvider(StorageProvider):
         path = self._bucket_dir(bucket) / key.lstrip("/")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-        return {"key": key, "size": len(data), "content_type": content_type, "etag": f"local-{len(data)}"}
+        return {
+            "key": key,
+            "size": len(data),
+            "content_type": content_type,
+            "etag": f"local-{len(data)}",
+        }
 
     def get_object(self, bucket: str, key: str) -> bytes:
         path = self._bucket_dir(bucket) / key.lstrip("/")

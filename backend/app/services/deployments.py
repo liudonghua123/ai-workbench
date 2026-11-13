@@ -128,7 +128,8 @@ def _create(
     running = active_deployment(session, project.id, environment)
     if running is not None:
         raise ConflictError(
-            f"项目已有进行中的 {environment} 部署 {running.version}（{running.status}），请等待完成或先停止",
+            f"项目已有进行中的 {environment} 部署 {running.version}（{running.status}），"
+            "请等待完成或先停止",
             details={"deployment_id": running.id, "status": running.status},
         )
     deployment = Deployment(

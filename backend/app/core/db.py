@@ -7,8 +7,12 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
 
-connect_args = {"check_same_thread": False} if settings.resolved_database_url.startswith("sqlite") else {}
-engine = create_engine(settings.resolved_database_url, connect_args=connect_args, pool_pre_ping=True)
+connect_args = (
+    {"check_same_thread": False} if settings.resolved_database_url.startswith("sqlite") else {}
+)
+engine = create_engine(
+    settings.resolved_database_url, connect_args=connect_args, pool_pre_ping=True
+)
 
 
 def init_db() -> None:

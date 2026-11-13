@@ -38,7 +38,7 @@ from app.services import conventions as conventions_service
 from app.services import deployments as deploy_service
 from app.services import gitops, llm, scaffold, sql_guard
 from app.services.scaffold import CreateProjectSpec
-from app.services.serializers import serialize_deployment, serialize_project
+from app.services.serializers import serialize_project
 
 
 def _project_dict(project: Project, session: Session) -> dict[str, Any]:
@@ -559,7 +559,8 @@ def run_agent(agent_key: str, prompt: str, project_id: str | None = None) -> dic
 
 def describe_access() -> dict[str, Any]:
     """Who am I, which permissions do I hold, and what can I not do in this org."""
-    from app.core import context, permissions as permission_catalog
+    from app.core import context
+    from app.core import permissions as permission_catalog
 
     principal = context.current_principal()
     if principal is None:
@@ -645,7 +646,7 @@ def list_org_members(org_id: str = "") -> list[dict[str, Any]]:
 def list_sso_providers(org_id: str = "") -> dict[str, Any]:
     """Which identity sources exist, and which fields a new one still needs."""
     from app.core import context
-    from app.models import IdentityProvider, Organization
+    from app.models import IdentityProvider
     from app.providers import auth as auth_providers
     from app.services import identity
 

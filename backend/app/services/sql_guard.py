@@ -93,9 +93,8 @@ def check(sql: str, *, mode: str | None = None) -> str:
         if mode == "readonly":
             name = first_keyword(body[6:]) or ""
             if name not in READ_ONLY_PRAGMAS:
-                raise ValidationFailed(
-                    f"只读模式下不允许 PRAGMA {name}（允许: {', '.join(sorted(READ_ONLY_PRAGMAS))}）"
-                )
+                allowed = ", ".join(sorted(READ_ONLY_PRAGMAS))
+                raise ValidationFailed(f"只读模式下不允许 PRAGMA {name}（允许: {allowed}）")
         return body
 
     if keyword in READ_KEYWORDS:

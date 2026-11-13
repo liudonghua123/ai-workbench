@@ -24,9 +24,9 @@ from urllib.parse import quote, urlencode
 from xml.etree import ElementTree
 
 from app.providers.auth.base import (
+    AuthorizeContext,
     AuthProvider,
     AuthProviderError,
-    AuthorizeContext,
     ExternalProfile,
 )
 

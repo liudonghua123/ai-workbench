@@ -284,7 +284,8 @@ def check_http() -> None:
         preview = client.get("/echo", headers={"host": PREVIEW_HOST})
         check(
             "preview host resolves too",
-            preview.status_code == 200 and preview.headers.get("x-workbench-route") == "gw-smoke:preview",
+            preview.status_code == 200
+            and preview.headers.get("x-workbench-route") == "gw-smoke:preview",
             f"{preview.status_code} {preview.headers.get('x-workbench-route')}",
         )
 

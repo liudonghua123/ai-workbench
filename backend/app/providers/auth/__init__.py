@@ -11,9 +11,9 @@ from typing import Any
 
 from app.models import IdentityProvider
 from app.providers.auth.base import (
+    AuthorizeContext,
     AuthProvider,
     AuthProviderError,
-    AuthorizeContext,
     ExternalProfile,
 )
 from app.providers.auth.cas import CasProvider
@@ -37,7 +37,9 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "label_zh": "CAS 单点登录",
         "docs": "https://apereo.github.io/cas/",
         "blurb": "CAS 2.0 / 3.0 ticket 校验（XML），适用于高校与内网统一认证。",
-        "blurb_en": "CAS 2.0 / 3.0 ticket validation over XML — common in universities and intranets.",
+        "blurb_en": (
+            "CAS 2.0 / 3.0 ticket validation over XML — common in universities and intranets."
+        ),
         "fields": [
             {"key": "base_url", "label": "CAS base URL", "label_zh": "CAS 服务地址",
              "placeholder": "https://cas.example.com/cas", "required": True},
@@ -145,7 +147,9 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "label_zh": "演示身份源",
         "docs": "",
         "blurb": "工作台自带的 OIDC 形状身份源，用于离线验证完整登录链路。",
-        "blurb_en": "An OIDC-shaped IdP served by the workbench itself, for offline end-to-end checks.",
+        "blurb_en": (
+            "An OIDC-shaped IdP served by the workbench itself, for offline end-to-end checks."
+        ),
         "fields": [
             {"key": "base_url", "label": "Workbench base URL", "label_zh": "工作台地址",
              "placeholder": "http://127.0.0.1:8000"},

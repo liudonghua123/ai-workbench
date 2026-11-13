@@ -20,9 +20,9 @@ from typing import Any
 from urllib.parse import urlencode
 
 from app.providers.auth.base import (
+    AuthorizeContext,
     AuthProvider,
     AuthProviderError,
-    AuthorizeContext,
     ExternalProfile,
 )
 

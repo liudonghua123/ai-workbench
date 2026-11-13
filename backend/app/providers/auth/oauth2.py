@@ -17,11 +17,10 @@ from urllib.parse import urlencode
 import httpx
 import jwt
 
-from app.models import IdentityProvider
 from app.providers.auth.base import (
+    AuthorizeContext,
     AuthProvider,
     AuthProviderError,
-    AuthorizeContext,
     ExternalProfile,
     _dig,
 )
@@ -137,7 +136,9 @@ class OAuth2Provider(AuthProvider):
         mapping = self.mappings
         subject = str(_dig(claims, mapping["subject"]) or "")
         if not subject:
-            raise AuthProviderError(f"无法从返回中读取用户标识（mappings.subject={mapping['subject']}）")
+            raise AuthProviderError(
+                f"无法从返回中读取用户标识（mappings.subject={mapping['subject']}）"
+            )
         groups_raw = _dig(claims, str(self.config.get("group_claim") or "groups"), [])
         groups = [str(item) for item in groups_raw] if isinstance(groups_raw, list) else []
         return ExternalProfile(

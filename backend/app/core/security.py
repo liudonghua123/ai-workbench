@@ -23,16 +23,16 @@ Design constraints, kept from the previous version on purpose:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import Request
 from sqlmodel import Session, select
 
 from app.core import passwords
+from app.core import permissions as perms
 from app.core.config import settings
 from app.core.db import session_scope
 from app.core.errors import ForbiddenError, UnauthorizedError
-from app.core import permissions as perms
 from app.models import (
     IdentityProvider,
     Membership,
@@ -42,9 +42,11 @@ from app.models import (
     Project,
     Role,
     RoleBinding,
-    Session as SessionModel,
     User,
     UserStatus,
+)
+from app.models import (
+    Session as SessionModel,
 )
 
 # Legacy role names kept so old configs keep working.
@@ -388,15 +390,15 @@ def resolve(request: Request) -> Principal:
         ).first()
         if row is None:
             raise UnauthorizedError("令牌无效", details={"scheme": "Bearer"})
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expires = row.expires_at
         if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
+            expires = expires.replace(tzinfo=UTC)
         if row.revoked_at is not None or expires <= now:
             raise UnauthorizedError("会话已过期，请重新登录", details={"reason": "expired"})
 
         # cheap sliding activity marker; write at most once a minute
-        if now.timestamp() - row.last_seen_at.replace(tzinfo=timezone.utc).timestamp() > 60:
+        if now.timestamp() - row.last_seen_at.replace(tzinfo=UTC).timestamp() > 60:
             row.last_seen_at = now
             session.add(row)
 

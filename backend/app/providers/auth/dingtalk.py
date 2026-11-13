@@ -18,9 +18,9 @@ from typing import Any
 from urllib.parse import urlencode
 
 from app.providers.auth.base import (
+    AuthorizeContext,
     AuthProvider,
     AuthProviderError,
-    AuthorizeContext,
     ExternalProfile,
 )
 
@@ -81,7 +81,10 @@ class DingTalkProvider(AuthProvider):
             avatar=str(profile.get("avatarUrl") or ""),
             tenant=str(self.config.get("corp_id") or ""),
             groups=[],
-            raw={"user": profile, "token": {k: v for k, v in token.items() if "token" not in k.lower()}},
+            raw={
+                "user": profile,
+                "token": {k: v for k, v in token.items() if "token" not in k.lower()},
+            },
         )
 
     def probe(self) -> dict[str, Any]:

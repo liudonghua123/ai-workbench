@@ -88,7 +88,7 @@ LogSink = Callable[[str], Awaitable[None] | None]
 # ---------------------------------------------------------------------------
 
 
-class Provider(ABC):
+class Provider(ABC):  # noqa: B024 - marker base, subclasses share shape only
     """Common marker: every provider declares a unique ``name``."""
 
     name: str = "abstract"
